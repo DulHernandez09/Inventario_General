@@ -1,0 +1,390 @@
+﻿<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard Inventario General · selectshop</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
+<link rel="stylesheet" href="css/panel.css">
+<link rel="stylesheet" href="css/ejecutivo.css">
+</head>
+<body>
+<div id="app" class="first"></div>
+<div id="tip" role="tooltip"></div>
+<script src="data/dashboard_data.js"></script>
+<script src="data/auditoria.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/kit.js"></script>
+<script>
+/* Dashboard Inventario General (Propuesta 2). Datos: scripts/generar_datos.py · cálculo: js/engine.js · componentes: js/kit.js.
+   Este archivo solo organiza las cuatro vistas y dibuja lo que el motor devuelve. */
+(function () {
+'use strict';
+var D = window.DASHBOARD_DATA, AUD = window.AUDITORIA || null, app = document.getElementById('app'), tip = document.getElementById('tip');
+if (!D) { app.innerHTML = '<div class="wrap"><div class="card sec">No se encontraron los datos (data/dashboard_data.js). Ejecuta scripts/generar_datos.py.</div></div>'; return; }
+var E = InvEngine.create(D), K = Kit.create(D);
+var nf = K.nf, esc = K.esc, pz = K.pz, money = K.money, sg = K.sg, sgm = K.sgm, pcs = K.pcs, arrow = K.arrow, cls = K.cls, dl = K.dl, tipAttr = K.tipAttr, skuBtn = K.skuBtn, storeCell = K.storeCell, two = K.two;
+var iDisp = E.iDisp, iRes = E.iRes;
+
+var VIEWS = [['resumen', 'Resumen ejecutivo'], ['canal', 'Inventario por canal'], ['almacen', 'Inventario por almacén'], ['mov', 'Movimientos y riesgos']];
+/* con Fuente = Todos solo hay Resumen ejecutivo; ERP añade almacén y Plataformas añade canal */
+function tabsFor() { return S.mode === 'all' ? ['resumen'] : S.mode === 'erp' ? ['resumen', 'almacen', 'mov'] : ['resumen', 'canal', 'mov']; }
+var S = { mode: 'all', et: 't', ch: -1, ts: [], cs: [], us: [], q: '', ds: [], sort: 'total', lrB: 'all', open: null, view: 'resumen', canal: '', mxm: 'q', showNewE: false, showNewP: false };
+var fq = location.search.match(/fuente=(erp|plat)/); if (fq) S.mode = fq[1];   // enlace directo: index_ejecutivo.html?fuente=erp
+var hv = location.hash.slice(1); if (VIEWS.some(function (v) { return v[0] === hv; })) S.view = hv;   // enlace directo (con fuente ERP o Plataformas): index_ejecutivo.html#canal
+var pend = false;
+function setS(o) { for (var k in o) S[k] = o[k]; schedule(); }
+function schedule() { if (pend) return; pend = true; var done = false; function go() { if (done) return; done = true; pend = false; render(); } requestAnimationFrame(go); setTimeout(go, 60); }  // rAF no corre en pestañas ocultas: el temporizador garantiza el redibujado
+function pctv(a, b) { return b ? (a - b) / Math.abs(b) * 100 : 0; }
+function share(a, b) { return b ? (a / b * 100).toFixed(2) + '%' : '0.00%'; }
+
+/* ---------- tarjeta de indicador (siempre piezas y valor) ---------- */
+function kpi(label, big, unit, line2, unit2, note, color, tag, bigCls) {
+  return '<div class="card kpi" style="--c:' + color + '"><div class="k">' + label + '</div><div class="row"><span class="big v1 sm ' + (bigCls || '') + '">' + big + '</span><span class="u">' + unit + '</span></div>' +
+    '<div class="row"><span class="big v2">' + line2 + '</span><span class="u">' + unit2 + '</span></div><div class="n num">' + note + '</div>' + (tag ? '<div><span class="tagn">' + esc(tag) + '</span></div>' : '') + '</div>';
+}
+function section(tagCls, title, sub, body, extra) {
+  return '<section class="card sec" aria-label="' + esc(title) + '"><div class="sechead"><div class="l"><h2 class="tag ' + tagCls + '">' + esc(title) + '</h2><span class="sub">' + sub + '</span></div>' + (extra || '') + '</div>' + body + '</section>';
+}
+
+/* ---------- vista 1: resumen ejecutivo ---------- */
+/* tarjeta pequeña: una fuente con piezas, valor, % del total y variación contra el corte anterior (si existe) */
+function mini(name, cur, prev, base, color, applies, note, extra) {
+  if (!applies) return '<div class="mini" style="--c:#C9D0D9"><div class="k">' + esc(name) + '</div><div class="sub">No aplica con la fuente seleccionada</div></div>';
+  var h = '<div class="mini" style="--c:' + color + '"><div class="k">' + esc(name) + '</div><div class="num"><b>' + pz(cur.q) + '</b> <span class="sub">pzs · ' + share(cur.v, base.v) + ' del valor</span></div><div class="sub2 num">' + money(cur.v) + '</div>';
+  if (prev && (prev.q || prev.v)) { var dq = cur.q - prev.q, dv = cur.v - prev.v; h += '<div class="num ' + cls(dq) + '" style="font-size:11.5px">' + arrow(dq) + ' ' + sg(dq) + ' pzs · ' + sgm(dv) + ' (' + pcs(pctv(cur.v, prev.v)) + ')</div>'; }
+  else if (note) h += '<div class="sub">' + esc(note) + '</div>';
+  return h + (extra || '') + '</div>';
+}
+function newCard(title, list, applies, flag, pv, why) {
+  var q = list.reduce(function (a, r) { return a + r.q; }, 0), v = list.reduce(function (a, r) { return a + r.v; }, 0);
+  if (!applies) return '<div class="card kpi" style="--c:#C9D0D9"><div class="k">' + title + '</div><div class="row"><span class="big v1">—</span></div><div class="n">No aplica con la fuente seleccionada</div></div>';
+  return '<div class="card kpi" style="--c:var(--violet);background:#FBF9FF"><div class="k" style="display:flex;justify-content:space-between;align-items:center;gap:8px">' + title + (pv >= 0 ? '<button type="button" data-a="' + flag + '" aria-expanded="' + !!S[flag === 'newE' ? 'showNewE' : 'showNewP'] + '" style="all:unset;cursor:pointer;font-size:11px;font-weight:600;color:#1F5FAE;text-decoration:underline;text-underline-offset:2px;white-space:nowrap;text-transform:none;letter-spacing:0">' + (S[flag === 'newE' ? 'showNewE' : 'showNewP'] ? 'Ocultar lista' : 'Ver lista') + '</button>' : '') + '</div>' +
+    (pv >= 0 ? '<div class="row"><span class="big v1" style="color:var(--violet-t)">' + nf.format(list.length) + '</span><span class="u">SKU</span></div><div class="row"><span class="big v2">' + pz(q) + '</span><span class="u">pzs · <b class="num">' + money(v) + '</b></span></div><div class="n">sin existencia el ' + dl(pv) + ' y con existencia al ' + dl(S._d1) + '</div>' : '<div class="row"><span class="big v1">—</span></div><div class="n">Sin corte anterior para comparar</div>') + '</div>';
+}
+function newList(title, list, pv, d1) {
+  var h = '<section class="card sec" aria-label="' + esc(title) + '"><div class="sechead"><div class="l"><h2 class="tag" style="background:var(--violet)">' + esc(title) + '</h2><span class="sub">' + nf.format(list.length) + ' SKU con existencia al ' + dl(d1) + ' que no tenían el ' + dl(pv) + ' · hasta 200 por valor</span></div></div>';
+  if (!list.length) return h + '<div class="empty">No hay SKU nuevos para los filtros seleccionados.</div></section>';
+  return h + '<div class="tw"><div class="tb" style="--cols:30px 140px minmax(0,1fr) 150px 110px 140px;--mw:820px"><div class="th"><div>#</div><div>SKU</div><div>Producto</div><div>Tienda</div><div class="r">Piezas</div><div class="r">Valor a costo</div></div><div style="max-height:360px;overflow-y:auto">' +
+    list.slice(0, 200).map(function (r, j) { return '<div class="tr" style="animation-delay:' + Math.min(j, 12) * 40 + 'ms"><div class="num sub">' + (j + 1) + '</div>' + skuBtn(r.k) + '<div class="ell" title="' + esc(D.tit[r.k]) + '">' + esc(D.tit[r.k] || '—') + '</div>' + storeCell(r.st, 'pzs', 'Tiendas con existencia') + '<div class="r num"><b>' + pz(r.q) + '</b> pzs</div><div class="r num">' + money(r.v) + '</div></div>'; }).join('') +
+    '<div class="tr nl-total" style="background:#EEF1F5;font-weight:700;border-bottom:0;position:sticky;bottom:0"><div></div><div>Total</div><div class="ell">' + nf.format(list.length) + ' SKU' + (list.length > 200 ? ' (se muestran los 200 de mayor valor)' : '') + '</div><div></div><div class="r num">' + pz(list.reduce(function (x, r) { return x + r.q; }, 0)) + ' pzs</div><div class="r num">' + money(list.reduce(function (x, r) { return x + r.v; }, 0)) + '</div></div></div></div></div></section>';
+}
+/* tiendas de una categoría (existencia o movimiento) para el recuadro al pasar el cursor */
+function tiendasHtml(mapT, keys, metric, src) {
+  var agg = {};
+  keys.forEach(function (k) { var m = mapT[k] || {}; Object.keys(m).forEach(function (t) { var x = agg[t] || (agg[t] = { q: 0, v: 0, e: 0, s: 0, ve: 0, vs: 0 }); for (var f in m[t]) x[f] += m[t][f]; }); });
+  var rows = Object.keys(agg).map(function (t) { var x = agg[t]; return { t: +t, q: x.q, v: metric === 'mov' ? x.ve + x.vs : x.v }; }).filter(function (r) { return r.v; }).sort(function (a, b) { return b.v - a.v; });
+  if (!rows.length) return '';
+  return '<div class="sp"><b>' + (metric === 'mov' ? 'Tiendas · valor movido' : 'Tiendas · valor a costo') + '</b></div>' + rows.slice(0, 8).map(function (r) { return '<div class="l"><span>' + esc(D.dims.t[r.t]) + '</span><b>' + money(r.v) + (metric === 'mov' ? '' : ' · ' + pz(r.q) + ' pzs') + '</b></div>'; }).join('') + (rows.length > 8 ? '<div class="sp">+ ' + (rows.length - 8) + ' tiendas más</div>' : '');
+}
+/* categorías que más se mueven, por fuente: Tenía + Entró − Salió = Tiene, con valor a costo y piezas (todo movimiento entre cortes) */
+function catMovTable(C, src) {
+  var names = ['ERP', 'Plataformas'], sidx = src === 1 ? 1 : C.eb, ini = C.catIni, fin = C.catFin, z = { q: 0, v: 0 };
+  var rows = Object.keys(C.byCatMovS).map(function (k) {
+    var g = C.byCatMovS[k][src];
+    return { k: +k, e: g.e, s: g.s, ve: g.ve, vs: g.vs, mv: g.ve + g.vs, i0: (ini[k] || [z, z])[src], i1: (fin[k] || [z, z])[src] };
+  }).filter(function (r) { return r.mv > 0.005; });
+  rows.sort(function (a, b) { return b.mv - a.mv; });
+  var tot = { e: 0, s: 0, ve: 0, vs: 0 }; rows.forEach(function (r) { for (var f in tot) tot[f] += r[f]; });
+  var T0 = C.A(sidx, C.ps), T1 = C.A(sidx, C.d1);
+  function cell(v, q, c) { return '<div class="r"><div class="two"><span class="num ' + (c || '') + '"><b>' + v + '</b></span><small class="num">' + q + ' pzs</small></div></div>'; }
+  function cells(i0, e, ve, s, vs, i1) {
+    return cell(money(i0.v), pz(i0.q)) + cell('+' + money(ve), pz(e), 'up') + cell('−' + money(vs), pz(s), 'dn') + cell(sgm(ve - vs), sg(e - s), cls(ve - vs)) + cell(money(i1.v), pz(i1.q));
+  }
+  var body = !rows.length ? '<div class="empty">Sin movimientos de ' + names[src] + ' en el periodo (' + (C.pv < 0 ? 'no hay corte anterior' : 'sin cambios de existencia') + ').</div>' :
+    '<div class="tw"><div class="tb" style="--cols:minmax(150px,1.3fr) repeat(5,minmax(0,1fr));--mw:880px"><div class="th"><div>Categoría</div><div class="r">Tenía el ' + dl(C.ps) + '</div><div class="r">+ Entró</div><div class="r">− Salió</div><div class="r">Neto</div><div class="r">Tiene el ' + dl(C.d1) + '</div></div>' +
+    rows.slice(0, 10).map(function (r, j) {
+      var tp = '<div class="h">' + esc(D.dims.c[r.k]) + ' · ' + names[src] + '</div><div class="l"><span>Tenía el ' + dl(C.ps) + '</span><b>' + money(r.i0.v) + ' · ' + pz(r.i0.q) + ' pzs</b></div><div class="l"><span>+ Entró</span><b>' + money(r.ve) + ' · ' + pz(r.e) + ' pzs</b></div><div class="l"><span>− Salió</span><b>' + money(r.vs) + ' · ' + pz(r.s) + ' pzs</b></div><div class="l"><span>Tiene el ' + dl(C.d1) + '</span><b>' + money(r.i1.v) + ' · ' + pz(r.i1.q) + ' pzs</b></div>' + tiendasHtml(C.byCatMovTS[src], [r.k], 'mov');
+      return '<div class="tr"' + tipAttr(tp) + ' style="animation-delay:' + (j * 45) + 'ms;cursor:help"><div class="ell" style="font-weight:600" title="' + esc(D.dims.c[r.k]) + '">' + (j + 1) + '. ' + esc(D.dims.c[r.k]) + '</div>' + cells(r.i0, r.e, r.ve, r.s, r.vs, r.i1) + '</div>'; }).join('') +
+    '<div class="tr" style="background:#EEF1F5;font-weight:700;border-bottom:0"><div>Toda la fuente (' + nf.format(rows.length) + ' categorías con movimiento)</div>' + cells(T0, tot.e, tot.ve, tot.s, tot.vs, T1) + '</div></div></div>';
+  var go = rows.length ? '<div style="display:flex;justify-content:flex-end"><button type="button" class="gobtn" data-a="gomov" data-v="' + (src === 1 ? 'plat' : 'erp') + '">Ver movimientos y riesgos de ' + names[src] + ' →</button></div>' : '';
+  return section('', 'Categorías que más se mueven · ' + names[src], 'valor a costo y piezas · Tenía + Entró − Salió = Tiene · ' + dl(C.ps) + ' → ' + dl(C.d1) + ' · pasa el cursor para ver las tiendas', body + go);
+}
+function catMovSections(C, hasE, hasP) {
+  return (hasE ? catMovTable(C, 0) : '') + (hasP ? catMovTable(C, 1) : '');
+}
+
+/* explica de dónde sale el cambio de inventario de una fuente contra el corte anterior */
+function bridgeText(name, b, pv, d1) {
+  var dq = b.fin.q - b.ini.q, dv = b.fin.v - b.ini.v, inQ = b.nuevos.q + b.ent.q, inV = b.nuevos.v + b.ent.v;
+  var x = '<b>' + name + ' · cambio contra el ' + dl(pv) + ':</b> pasó de <b class="num">' + pz(b.ini.q) + ' pzs</b> (' + money(b.ini.v) + ') a <b class="num">' + pz(b.fin.q) + ' pzs</b> (' + money(b.fin.v) + '), es decir <b class="num">' + sg(dq) + ' pzs</b> y <b class="num">' + sgm(dv) + '</b>. ' +
+    'Entraron ' + nf.format(b.nuevos.n) + ' SKU nuevos (' + sg(b.nuevos.q) + ' pzs, ' + sgm(b.nuevos.v) + '); los SKU que ya existían recibieron +' + pz(b.ent.q) + ' pzs (+' + money(b.ent.v) + ') y perdieron −' + pz(b.sal.q) + ' pzs (−' + money(b.sal.v) + ')' + (b.agot.n ? ', entre ellos ' + nf.format(b.agot.n) + ' SKU que se agotaron (' + pz(b.agot.q) + ' pzs)' : '') + '.';
+  if (dq !== 0 && dv !== 0 && (dq > 0) !== (dv > 0) && inQ > 0 && b.sal.q > 0) x += ' Las piezas ' + (dq < 0 ? 'bajaron' : 'subieron') + ' pero el valor ' + (dv > 0 ? 'subió' : 'bajó') + ' porque lo que entró cuesta ' + (inV / inQ > b.sal.v / b.sal.q ? 'más' : 'menos') + ' por pieza (' + money(inV / inQ) + ') que lo que salió (' + money(b.sal.v / b.sal.q) + ').';
+  return x;
+}
+function vResumen(C, R, LR, NM) {
+  var cur = R.cur, prv = R.prev, d1 = C.d1, pv = C.pv, tot = cur.tot, h = '<div class="view">';
+  var hasE = S.mode !== 'plat', hasP = S.mode !== 'erp', ps = pv >= 0 && prv;
+  S._d1 = d1;
+  var subLbl = S.mode === 'erp' ? (S.et === 'd' ? ' · ERP disponible' : S.et === 'r' ? ' · ERP reservado' : ' · ERP total') : '';
+  var sinDisp = AUD && AUD.disponible && AUD.disponible.empresas_sin_archivo && AUD.disponible.empresas_sin_archivo.length ? AUD.disponible.empresas_sin_archivo.join(', ') : '';
+
+  /* 1 a 3: tarjetas según la fuente — Todos: total + para venta · ERP: total + para venta (disponible) + reservado · Plataformas: total + para venta (aptas) */
+  var dq = ps ? tot.q - prv.tot.q : 0, dv = ps ? tot.v - prv.tot.v : 0, only = S.mode === 'erp' ? ' · ERP' : S.mode === 'plat' ? ' · Plataformas' : '', both = hasE && hasP;
+  var c1 = '<div class="card bigcard" style="--c:var(--red)"><div class="t">Total de inventario' + only + ' · al ' + dl(d1) + '</div><div class="main"><span class="big v">' + money(tot.v) + '</span><span class="big p">' + pz(tot.q) + ' pzs</span></div>' +
+    (ps ? '<div class="var ' + cls(dq) + '"><b class="num">' + arrow(dq) + ' ' + sg(dq) + ' pzs (' + pcs(pctv(tot.q, prv.tot.q)) + ')</b><b class="num">' + sgm(dv) + ' (' + pcs(pctv(tot.v, prv.tot.v)) + ')</b><span class="sub">vs corte anterior · ' + dl(pv) + '</span></div>' : '<div class="var sub">Sin corte anterior para comparar con la selección actual.</div>') +
+    (both ? '<div class="split">' + mini('ERP', cur.totErp, ps ? prv.totErp : null, tot, 'var(--navy)', true) + mini('Plataformas', cur.totPlat, ps ? prv.totPlat : null, tot, 'var(--gold)', true) + '</div>' : '') + '</div>';
+  var ven = cur.ven, vend = pv >= 0 && prv && prv.venPlat ? prv.venPlat : null;
+  var venPrev = ps && (S.mode === 'plat' || prv.hasD) ? prv.ven : null, dispPrev = ps && prv.hasD ? prv.venErp : null, resPrev = ps && prv.hasD ? prv.com : null;
+  function varHtml(c, pr, extra) { return '<div class="var ' + (pr ? cls(c.q - pr.q) : '') + '">' + (pr ? '<b class="num">' + arrow(c.q - pr.q) + ' ' + sg(c.q - pr.q) + ' pzs (' + pcs(pctv(c.q, pr.q)) + ')</b><b class="num">' + sgm(c.v - pr.v) + ' (' + pcs(pctv(c.v, pr.v)) + ')</b><span class="sub">vs corte anterior · ' + dl(pv) + '</span>' : '') + '<span class="sub">' + extra + '</span></div>'; }
+  var vLine = varHtml(ven, venPrev, share(ven.v, tot.v) + ' del valor ' + (S.mode === 'erp' ? 'del ERP · ERP disponible' : 'del inventario' + (both ? ' · ERP disponible + Plataformas aptas' : ' · Plataformas aptas')) + (S.mode !== 'plat' && !cur.hasD ? ' · sin archivo de disponible en este corte' : ''));
+  var c2 = '<div class="card bigcard" style="--c:var(--in)"><div class="t">Inventario para venta' + only + ' · al ' + dl(d1) + '</div><div class="main"><span class="big v">' + money(ven.v) + '</span><span class="big p">' + pz(ven.q) + ' pzs</span></div>' + vLine +
+    (both ? '<div class="split">' + mini('ERP disponible para la venta', cur.venErp, dispPrev, tot, 'var(--navy)', true, cur.hasD ? 'Sin corte anterior' : 'Sin archivo de disponible en este corte') + mini('Plataformas aptas para vender', cur.venPlat, vend, tot, 'var(--gold)', true) + '</div>' : '') + '</div>';
+  var c3 = S.mode === 'erp' ? '<div class="card bigcard" style="--c:var(--out)"><div class="t">Reservado · ERP · al ' + dl(d1) + '</div><div class="main"><span class="big v">' + money(cur.com.v) + '</span><span class="big p">' + pz(cur.com.q) + ' pzs</span></div>' + varHtml(cur.com, resPrev, share(cur.com.v, tot.v) + ' del valor del ERP · asignado + reservado + autorizado' + (cur.hasD ? '' : ' · sin archivo de disponible en este corte')) + '</div>' : '';
+  function cardUb(tt, c, pr, nota, col) { return '<div class="card bigcard" style="--c:' + col + '"><div class="t">' + tt + ' · ERP · al ' + dl(d1) + '</div><div class="main"><span class="big v">' + money(c.v) + '</span><span class="big p">' + pz(c.q) + ' pzs</span></div>' + varHtml(c, pr, share(c.v, tot.v) + ' del valor del ERP · ' + nota) + '</div>'; }
+  var c4 = S.mode === 'erp' ? cardUb('Mermas', cur.mer, ps ? prv.mer : null, 'ubicación ' + D.cfg.ubicaciones_fuera_de_disponible.mermas.join(', ') + ', fuera del disponible', 'var(--red)') : '';
+  var c6 = S.mode === 'erp' ? cardUb('Venta Outlet', cur.outl, ps ? prv.outl : null, 'ubicación ' + D.cfg.ubicaciones_fuera_de_disponible.outlet.join(', ') + ', fuera del disponible' + (cur.outl.q === 0 && cur.outl.v === 0 ? ' · sin existencia en el concentrado' : ''), 'var(--navy)') : '';
+  var c5 = S.mode === 'erp' ? cardUb('Venta plataforma', cur.vplat, ps ? prv.vplat : null, 'ubicaciones ' + D.cfg.ubicaciones_fuera_de_disponible.venta_plataforma.join(', ') + ', fuera del disponible', 'var(--gold)') : '';
+  h += '<div class="' + (c3 ? 'big3' : 'big2') + '" aria-label="Tarjetas de inventario">' + c1 + c2 + c3 + '</div>';
+  if (c4) h += '<div class="big3" aria-label="Tarjetas de ubicaciones fuera del disponible">' + c4 + c5 + c6 + '</div>';
+
+  /* 8: SKU nuevos (ERP y Plataformas) */
+  h += '<section class="k4" style="grid-template-columns:repeat(' + (both ? 2 : 1) + ',minmax(0,1fr))" aria-label="SKU nuevos">' + (hasE ? newCard('Nuevos SKU · ERP', C.newsErp, true, 'newE', pv) : '') + (hasP ? newCard('Nuevos SKU · Plataformas', C.newsPlat, true, 'newP', pv) : '') + '</section>';
+  if (S.showNewE && hasE && pv >= 0) h += newList('Nuevos SKU · ERP', C.newsErp, pv, d1);
+  if (S.showNewP && hasP && pv >= 0) h += newList('Nuevos SKU · Plataformas', C.newsPlat, pv, d1);
+  /* flujo de Plataformas fuera del inventario: en camino (pendientes, en transferencia, devueltas) y procesos internos (en revisión, extraviadas) */
+  var exMeta = D.meta && D.meta.excluido && D.meta.excluido.por_estatus, flujoRes = null;
+  if (S.mode === 'plat' && exMeta) {   // el flujo solo aparece con Fuente = Plataformas
+    var selT = {}; if (C.tUse) S.ts.forEach(function (i) { selT[D.dims.t[i]] = 1; });
+    var exAt = function (est, di) {
+      var f = exMeta[est] && exMeta[est][D.dates[di]], o = { q: 0, v: 0 }; if (!f) return o;
+      Object.keys(f.t).forEach(function (n2) { if (!C.tUse || selT[n2]) { o.q += f.t[n2].q; o.v += f.t[n2].v; } });
+      return o;
+    };
+    var gE = D.meta.excluido.grupos || { en_camino: [], proceso_interno: [] };
+    var sumG = function (names, di) { var o = { q: 0, v: 0 }; names.forEach(function (n2) { var x = exAt(n2, di); o.q += x.q; o.v += x.v; }); return o; };
+    var varLine = function (cu2, pr2) { var dq2 = pr2 ? cu2.q - pr2.q : 0, dv2 = pr2 ? cu2.v - pr2.v : 0; return '<div class="n num ' + (pr2 ? cls(dq2) : '') + '">' + (pr2 ? arrow(dq2) + ' ' + sg(dq2) + ' pzs · ' + sgm(dv2) + ' vs ' + dl(pv) : 'Sin corte anterior') + '</div>'; };
+    var camCu = sumG(gE.en_camino, d1), camPr = pv >= 0 ? sumG(gE.en_camino, pv) : null;
+    flujoRes = { cam: camCu };
+    var camCard = '<div class="card kpi fcard" style="--c:#2A4E8C"><div class="k">En camino · aún no ocupa espacio</div><div class="row"><span class="big v1">' + pz(camCu.q) + '</span><span class="u">pzs</span></div><div class="row"><span class="big v2">' + money(camCu.v) + '</span><span class="u">a costo</span></div>' + varLine(camCu, camPr) +
+      '<div class="fsteps">' + gE.en_camino.map(function (n2) { var x = exAt(n2, d1); return '<div><span>' + esc(n2) + '</span><b class="num">' + pz(x.q) + ' pzs · ' + money(x.v) + '</b></div>'; }).join('') + '</div></div>';
+    var ordenFlujo = ['En revisión', 'Extraviadas (en búsqueda)'].filter(function (n2) { return exMeta[n2]; });
+    var procCards = ordenFlujo.map(function (n2) {
+      var cu2 = exAt(n2, d1), pr2 = pv >= 0 ? exAt(n2, pv) : null;
+      return '<div class="card kpi fcard" style="--c:#A3ADB8"><div class="k">' + esc(n2) + ' · proceso interno</div><div class="row"><span class="big v1">' + pz(cu2.q) + '</span><span class="u">pzs</span></div><div class="row"><span class="big v2">' + money(cu2.v) + '</span><span class="u">a costo</span></div>' + varLine(cu2, pr2) + '</div>'; });
+    h += '<section class="flow" aria-label="Flujo fuera del inventario"><div class="flowhead"><span class="flowtag">FLUJO · Plataformas</span><span class="sub">no cuentan como inventario: lo que viene en camino y lo que está en un proceso interno</span></div><div class="flowrow">' + camCard + procCards.map(function (cd) { return '<div class="flowarrow" aria-hidden="true">⟶</div>' + cd; }).join('') + '</div></section>';
+  }
+
+  /* 3: lectura de lo que está pasando */
+  var b = [], per = C.per, cm = Object.keys(C.byCatMov).map(function (k) { return C.byCatMov[k]; }).sort(function (a, c) { return (c.ve + c.vs) - (a.ve + a.vs); })[0];
+  b.push('Al ' + dl(d1) + ' el inventario suma <b class="num">' + pz(tot.q) + ' pzs</b> y <b class="num">' + money(tot.v) + '</b> a costo' + (hasE && hasP ? ': ERP ' + pz(cur.totErp.q) + ' pzs (' + money(cur.totErp.v) + ') y Plataformas ' + pz(cur.totPlat.q) + ' pzs (' + money(cur.totPlat.v) + ')' : '') + '.');
+  if (ps) b.push('Contra el ' + dl(pv) + ' ' + (dq > 0 ? 'aumentó' : dq < 0 ? 'bajó' : 'no cambió') + ' <b class="num">' + sg(dq) + ' pzs</b> (' + pcs(pctv(tot.q, prv.tot.q)) + ') y <b class="num">' + sgm(dv) + '</b> en valor (' + pcs(pctv(tot.v, prv.tot.v)) + ').');
+  b.push('Inventario para venta: <b class="num">' + money(ven.v) + '</b> (' + pz(ven.q) + ' pzs, ' + share(ven.v, tot.v) + ' del valor)' + (hasE && hasP ? ' · ERP disponible ' + money(cur.venErp.v) + ' + Plataformas aptas ' + money(cur.venPlat.v) : '') + '.');
+  if (S.mode === 'erp' && cur.hasD) b.push('Reservado (asignado + reservado + autorizado): <b class="num">' + money(cur.com.v) + '</b> (' + pz(cur.com.q) + ' pzs, ' + share(cur.com.v, tot.v) + ' del valor del ERP).');
+  if (pv >= 0) [[0, hasE, 'ERP'], [1, hasP, 'Plataformas']].forEach(function (z) { if (z[1] && C.bridge[z[0]] && (C.bridge[z[0]].ini.q || C.bridge[z[0]].fin.q)) b.push(bridgeText(z[2], C.bridge[z[0]], pv, d1)); });
+  if (flujoRes) b.push('Fuera del inventario (Plataformas): <b class="num">' + pz(flujoRes.cam.q) + ' pzs</b> (' + money(flujoRes.cam.v) + ') vienen en camino; En revisión y Extraviadas se muestran aparte como proceso interno.');
+  if (per.e || per.s) b.push('Entre el ' + dl(C.ps) + ' y el ' + dl(d1) + ' entraron <b class="num">' + pz(per.e) + ' pzs</b> (' + money(per.ve) + ') y salieron <b class="num">' + pz(per.s) + ' pzs</b> (' + money(per.vs) + ').');
+  if (cm) b.push('La categoría que más valor mueve es <b>' + esc(D.dims.c[cm.k]) + '</b>: ' + money(cm.ve + cm.vs) + ' y ' + pz(cm.e + cm.s) + ' pzs entre entradas y salidas.');
+  if (pv >= 0) b.push('SKU nuevos contra el ' + dl(pv) + ': ' + (hasE ? '<b class="num">' + nf.format(C.newsErp.length) + '</b> en ERP' : '') + (hasE && hasP ? ' y ' : '') + (hasP ? '<b class="num">' + nf.format(C.newsPlat.length) + '</b> en Plataformas' : '') + '.');
+  if (NM.tot.n) b.push('<b class="num">' + money(NM.b[2].v + NM.b[3].v) + '</b> a costo llevan más de 14 días sin movimiento (' + share(NM.b[2].v + NM.b[3].v, NM.tot.v) + ' del valor con existencia).');
+  h += section('', '¿Qué está pasando con el inventario?', 'resumen automático con piezas y valor según los filtros y fechas', '<div class="story">' + b.map(function (x) { return '<div><i style="background:var(--ink)"></i><div>' + x + '</div></div>'; }).join('') + '</div>');
+
+  /* 7: comparativa contra el corte anterior — cortes actual y anterior de ERP, Plataformas y lo vendible */
+  /* renglón de la tabla comparativa (mismo formato de tabla que el resto: encabezado negro, renglones que se agrandan al pasar el cursor) */
+  function crow(name, dc, dp, c, p) {
+    var has = p && (p.q || p.v), sub = name.charAt(0) === ' ', dim = ' style="color:var(--muted)"';
+    var x = '<div class="tr"' + (sub ? ' style="background:#FAFBFC"' : '') + '><div class="ell" style="padding-left:' + (sub ? 22 : 0) + 'px;font-weight:' + (sub ? 500 : 700) + '" title="' + esc(name.trim()) + '">' + esc(name.trim()) + '</div><div class="num">' + (c ? dl(dc) : '—') + '</div><div class="num"' + (has ? '' : dim) + '>' + (has ? dl(dp) : 'No existe') + '</div>';
+    if (!c) return x + '<div class="r" style="grid-column:span 6;color:var(--muted)">No aplica con la fuente seleccionada</div></div>';
+    x += '<div class="r num"><b>' + pz(c.q) + '</b></div><div class="r num"' + (has ? '' : dim) + '>' + (has ? pz(p.q) : '—') + '</div><div class="r num ' + (has ? cls(c.q - p.q) : '') + '"' + (has ? '' : dim) + '>' + (has ? arrow(c.q - p.q) + ' ' + sg(c.q - p.q) + ' · ' + pcs(pctv(c.q, p.q)) : '—') + '</div>';
+    x += '<div class="r num"><b>' + money(c.v) + '</b></div><div class="r num"' + (has ? '' : dim) + '>' + (has ? money(p.v) : '—') + '</div><div class="r num ' + (has ? cls(c.v - p.v) : '') + '"' + (has ? '' : dim) + '>' + (has ? arrow(c.v - p.v) + ' ' + sgm(c.v - p.v) + ' · ' + pcs(pctv(c.v, p.v)) : '—') + '</div></div>';
+    return x;
+  }
+  var ex = D.meta && D.meta.excluido, exq = ex && ex.por_corte && ex.por_corte[D.dates[d1]];
+  var cobE = AUD ? AUD.ERP.cortes.length + ' cortes (' + dl(0) + ' – ' + dl(D.dates.length - 1) + ') · ' + nf.format(AUD.ERP.filas) + ' filas' : '', cobP = AUD ? AUD.PLATAFORMAS.cortes.length + ' cortes · ' + nf.format(AUD.PLATAFORMAS.filas) + ' filas' : '';
+  var cov = '<div class="tw"><div class="tb cov2" style="--cols:minmax(330px,2.6fr) 72px 90px minmax(0,1fr) minmax(0,1fr) minmax(0,1.3fr) minmax(0,1.3fr) minmax(0,1.3fr) minmax(0,1.6fr);--mw:1280px"><div class="th"><div>Fuente</div><div>Corte actual</div><div>Corte anterior</div><div class="r">Piezas actual</div><div class="r">Piezas anterior</div><div class="r">Variación</div><div class="r">Valor actual</div><div class="r">Valor anterior</div><div class="r">Variación</div></div>' +
+    (hasE ? crow('ERP (inventario)', d1, pv, cur.totErp, ps ? prv.totErp : null) : '') + (hasP ? crow('Plataformas (aptas y no aptas)', d1, pv, cur.totPlat, ps ? prv.totPlat : null) : '') +
+    crow('Vendible · total', d1, venPrev ? pv : -1, ven, venPrev) +
+    (hasE ? crow('   ERP disponible para la venta', d1, dispPrev ? pv : -1, cur.venErp, dispPrev) : '') +
+    (S.mode === 'erp' ? crow('   Reservado (ERP)', d1, resPrev ? pv : -1, cur.com, resPrev) : '') +
+    (hasP ? crow('   Plataformas aptas para vender', d1, pv, cur.venPlat, ps ? prv.venPlat : null) : '') + '</div></div>';
+  h += section('k', 'Comparativa contra el corte anterior', 'ERP, Plataformas y lo vendible · corte actual contra corte anterior, con piezas y valor a costo', cov);
+
+  /* 4: tendencia (barras gris claro) */
+  var uv = C.sel.map(function (i) { return C.invU[i]; }), vv = C.sel.map(function (i) { return C.invV[i]; });
+  h += section('b', 'Tendencia de inventario', 'piezas (barras) y valor a costo (línea) por corte · pasa el cursor para ver el detalle',
+    '<div class="trendwrap tcard" id="trend">' + K.comboChart(uv, vv, C, K.trendTips(C), true) + '</div>',
+    '<div style="display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--ink2)"><span style="display:flex;gap:6px;align-items:center"><span class="sw" style="background:#C9D0D9"></span>Unidades (barras · eje izq.)</span><span style="display:flex;gap:6px;align-items:center"><span class="sw" style="background:var(--gold);height:4px;border-radius:2px"></span>Valor a costo (línea · eje der.)</span></div>');
+
+  /* 5: distribución por categoría (aros con piezas y valor) */
+  h += K.donutSection('v', 'Distribución por categoría', 'valor a costo al ' + dl(d1) + ' · pasa el cursor sobre un bloque para ver las tiendas', C.byCat, function (k) { return D.dims.c[k]; }, '', function () { return false; }, 'c', 'Sin inventario para los filtros seleccionados.', { only: 'v', tipExtra: function (ks) { return tiendasHtml(C.byCatT, ks, 'inv'); } });
+
+  /* 6: categorías que más se mueven (ERP y Plataformas) */
+  h += catMovSections(C, hasE, hasP);
+
+  return h + '</div>';
+}
+
+/* ---------- vista 2: inventario por canal ---------- */
+function vCanal(C, R) {
+  var d1 = C.d1, pv = C.pv, h = '<div class="view">', cn = Object.keys(C.canal).map(function (x) { return C.canal[x]; }).sort(function (a, b) { return b.v - a.v; });
+  if (!cn.length) return h + section('', 'Inventario por canal', '', '<div class="empty">Sin inventario para los filtros seleccionados.</div>') + '</div>';
+  if (!C.canal[S.canal]) S.canal = cn[0].key;
+  var sel = C.canal[S.canal], tv = cn.reduce(function (a, c) { return a + c.v; }, 0), tq = cn.reduce(function (a, c) { return a + c.q; }, 0);
+  h += section('v', 'Canales', 'ERP (almacenes) y plataformas al ' + dl(d1) + ' · clic en un canal para ver sus productos',
+    '<div class="canals">' + cn.map(function (c, j) {
+      var dq = c.q - c.qp, hasP = pv >= 0 && (c.qp || c.vp);
+      return '<button type="button" class="canal' + (c.key === S.canal ? ' on' : '') + '" data-a="canal" data-v="' + esc(c.key) + '" aria-pressed="' + (c.key === S.canal) + '" style="animation-delay:' + (j * 60) + 'ms"><div class="nm"><span>' + esc(c.key === 'ERP' ? 'ERP · almacenes' : c.key) + '</span><i>' + share(c.v, tv) + '</i></div>' +
+        '<div class="num"><b style="font-size:17px">' + pz(c.q) + '</b> <span class="sub">pzs · ' + share(c.q, tq) + '</span></div><div class="big" style="font-size:16px;color:var(--gold-t)">' + money(c.v) + '</div>' +
+        (hasP ? '<div class="num ' + cls(dq) + '" style="font-size:11.5px">' + arrow(dq) + ' ' + sg(dq) + ' pzs · ' + sgm(c.v - c.vp) + ' vs ' + dl(pv) + '</div>' : '<div class="sub">Sin corte anterior</div>') +
+        (!c.erp ? '<div class="sub num">Vendible: ' + share(c.vv, c.v) + ' del valor</div>' : '<div class="sub">El ERP no maneja estatus de venta</div>') +
+        '<div class="shr"><i style="width:' + (tv ? Math.min(100, c.v / tv * 100) : 0).toFixed(1) + '%"></i></div></button>'; }).join('') + '</div>');
+
+  /* estatus por canal (solo Plataformas): TODOS los estatus, también los que no cuentan como inventario */
+  var plat = cn.filter(function (c) { return !c.erp; });
+  var exM2 = D.meta && D.meta.excluido, selT2 = {}; if (C.tUse) S.ts.forEach(function (i) { selT2[D.dims.t[i]] = 1; });
+  var fueraSet = {}; ((exM2 && exM2.estatus) || []).forEach(function (n2) { fueraSet[n2] = 1; });
+  function exCanal(est, canalName) {
+    var f = exM2 && exM2.por_estatus && exM2.por_estatus[est] && exM2.por_estatus[est][D.dates[d1]], o = { q: 0, v: 0 }; if (!f) return o;
+    Object.keys(f.t).forEach(function (n2) { if (!C.tUse || selT2[n2]) { var cc = f.t[n2].c && f.t[n2].c[canalName]; if (cc) { o.q += cc.q; o.v += cc.v; } } });
+    return o;
+  }
+  var ORDEN = ['Aptas para vender', 'No aptas para vender', 'Pendientes de ingreso', 'En transferencia', 'Devueltas por el comprador', 'En revisión', 'Extraviadas (en búsqueda)'];
+  var body = '';
+  if (plat.length) {
+    body += '<div class="slg" style="margin-bottom:8px">' + ORDEN.map(function (n2, k) { return '<span title="' + (fueraSet[n2] ? 'No cuenta como inventario' : 'Cuenta como inventario') + '"><i class="swt" style="background:' + K.statusColor(n2, k) + '"></i>' + esc(n2) + (fueraSet[n2] ? ' <small style="color:var(--muted)">(fuera)</small>' : '') + '</span>'; }).join('') + '</div>';
+    body += plat.map(function (c, j) {
+      var items = ORDEN.map(function (n2, k) {
+        var u = D.dims.u.indexOf(n2), x = !fueraSet[n2] && u >= 0 && c.byU[u] ? c.byU[u] : (fueraSet[n2] ? exCanal(n2, c.key) : { q: 0, v: 0 });
+        return { n: n2, k: k, q: x.q, v: x.v, fuera: !!fueraSet[n2] };
+      });
+      var TQ = items.reduce(function (a2, x) { return a2 + x.q; }, 0), TV = items.reduce(function (a2, x) { return a2 + x.v; }, 0);
+      var inv = items.filter(function (x) { return !x.fuera; }).reduce(function (a2, x) { a2.q += x.q; a2.v += x.v; return a2; }, { q: 0, v: 0 }), apt = items[0];
+      var segs = items.filter(function (x) { return x.v > 0; }).map(function (x) {
+        var w = TV ? x.v / TV * 100 : 0;
+        var tp = '<div class="h">' + esc(c.key) + ' · ' + esc(x.n) + (x.fuera ? ' · fuera del inventario' : '') + '</div><div class="l"><span>Piezas</span><b>' + pz(x.q) + '</b></div><div class="l"><span>Valor a costo</span><b>' + money(x.v) + '</b></div><div class="sp">' + w.toFixed(2) + '% del valor del canal (todos los estatus)</div>';
+        return '<div class="seg3" style="width:' + w.toFixed(3) + '%;background:' + K.statusColor(x.n, x.k) + ';animation-delay:' + (j * 90) + 'ms"' + tipAttr(tp) + '></div>'; }).join('');
+      return '<div class="srow"><b>' + esc(c.key) + '</b><div class="sbar">' + segs + '</div><div class="num"><b>' + pz(TQ) + '</b> pzs · ' + money(TV) + '<div class="sub">inventario: ' + pz(inv.q) + ' pzs · fuera: ' + pz(TQ - inv.q) + ' pzs</div><div class="sub">aptas: ' + pz(apt.q) + ' pzs · ' + share(apt.v, TV) + ' del valor</div></div></div>'; }).join('');
+  } else body = '<div class="empty">Los estatus pertenecen a Plataformas; elige Todos o Plataformas. El ERP no trae estatus de venta (ver Disponible/Reservado en los filtros).</div>';
+  h += section('n', 'Distribución de estatus por canal', 'participación del valor a costo de todos los estatus, incluidos los que no cuentan como inventario · pasa el cursor para ver piezas y valor', body);
+
+  /* productos con mayor valor del canal */
+  var top = E.topProducts(C, S.canal, 10);
+  var tb = top.length ? '<div class="tw"><div class="tb" style="--cols:28px 130px minmax(0,1fr) 150px 120px 150px 90px;--mw:900px"><div class="th"><div>#</div><div>SKU</div><div>Producto</div><div>Tienda</div><div class="r">Piezas</div><div class="r">Valor a costo</div><div class="r">% del canal</div></div>' +
+    top.map(function (r, j) { return '<div class="tr" style="animation-delay:' + (j * 45) + 'ms"><div class="num sub">' + (j + 1) + '</div>' + skuBtn(r.k) + '<div class="ell" title="' + esc(D.tit[r.k]) + '">' + esc(D.tit[r.k] || '—') + '</div>' + storeCell(r.st, 'pzs', 'Existencia por tienda') + '<div class="r num"><b>' + pz(r.q) + '</b> pzs</div><div class="r num"><b>' + money(r.v) + '</b></div><div class="r num sub">' + share(r.v, sel.v) + '</div></div>'; }).join('') + '</div></div>' : '<div class="empty">Sin productos para este canal con los filtros seleccionados.</div>';
+  h += section('', 'Productos con mayor valor · ' + (S.canal === 'ERP' ? 'ERP' : S.canal), 'top 10 por valor a costo al ' + dl(d1) + ' · clic en un SKU para buscarlo', tb);
+  return h + '</div>';
+}
+
+/* ---------- vista 3: inventario por almacén ---------- */
+function matrix(C) {
+  var combos = Object.keys(C.matATU).map(function (k) { return C.matATU[k]; }), us = {}, key = S.mxm;
+  combos.forEach(function (c) { var v = 0; Object.keys(c.u).forEach(function (u) { v += c.u[u].v; us[u] = (us[u] || 0) + c.u[u].v; }); c.tv = v; });
+  combos.sort(function (a, b) { return b.tv - a.tv; });
+  var cols = Object.keys(us).map(Number).sort(function (a, b) { return us[b] - us[a]; });
+  if (!combos.length) return '<div class="empty">' + (S.mode === 'plat' ? 'Los almacenes y ubicaciones aplican al ERP; elige Todos o ERP.' : 'Sin inventario para los filtros seleccionados.') + '</div>';
+  var mx = 1, colT = {}, rowT = {};
+  combos.forEach(function (c, ri) { rowT[ri] = { q: 0, v: 0 }; cols.forEach(function (u) { var x = c.u[u]; if (x) { mx = Math.max(mx, x[key]); rowT[ri].q += x.q; rowT[ri].v += x.v; colT[u] = colT[u] || { q: 0, v: 0 }; colT[u].q += x.q; colT[u].v += x.v; } }); });
+  var fmt = function (x) { return key === 'q' ? pz(x) : money(x); }, g = { q: 0, v: 0 };
+  var h = '<div class="mxw"><table class="mx"><thead><tr><th class="rl">Almacén · Tienda \ Ubicación</th>' + cols.map(function (u) { return '<th>' + esc(D.dims.u[u]) + '</th>'; }).join('') + '<th>Total</th></tr></thead><tbody>';
+  combos.forEach(function (c, ri) {
+    h += '<tr><td class="rl">' + esc(D.dims.ch[c.ch]) + '<small>' + esc(D.dims.t[c.t]) + '</small></td>' + cols.map(function (u) {
+      var x = c.u[u]; if (!x || (!x.q && !x.v)) return '<td class="mc" style="color:#B8C2CE">·</td>';
+      var it = Math.min(1, x[key] / mx), bg = 'rgba(42,78,140,' + (0.07 + 0.78 * Math.sqrt(it)).toFixed(3) + ')';
+      var tp = '<div class="h">' + esc(D.dims.ch[c.ch]) + ' · ' + esc(D.dims.t[c.t]) + ' · ' + esc(D.dims.u[u]) + '</div><div class="l"><span>Piezas</span><b>' + pz(x.q) + '</b></div><div class="l"><span>Valor a costo</span><b>' + money(x.v) + '</b></div>';
+      return '<td class="mc" style="background:' + bg + ';color:' + (it > 0.45 ? '#fff' : 'var(--ink)') + '"' + tipAttr(tp) + '>' + fmt(x[key]) + '</td>'; }).join('') + '<td class="tt">' + fmt(rowT[ri][key]) + '</td></tr>';
+    g.q += rowT[ri].q; g.v += rowT[ri].v;
+  });
+  return h + '<tr><td class="rl tt">Total</td>' + cols.map(function (u) { return '<td class="tt">' + fmt(colT[u] ? colT[u][key] : 0) + '</td>'; }).join('') + '<td class="tt">' + fmt(g[key]) + '</td></tr></tbody></table></div>';
+}
+/* inventario por almacén: tabla con tienda, piezas y valor a costo (un renglón por almacén y tienda) */
+function almacenTable(C) {
+  var rows = Object.keys(C.matATU).map(function (k) { var c = C.matATU[k], q = 0, v = 0; Object.keys(c.u).forEach(function (u) { q += c.u[u].q; v += c.u[u].v; }); return { c: c, q: q, v: v }; }).filter(function (r) { return r.q || r.v; });
+  rows.sort(function (a, b) { return b.v - a.v; });
+  var TQ = rows.reduce(function (a, r) { return a + r.q; }, 0), TV = rows.reduce(function (a, r) { return a + r.v; }, 0);
+  if (!rows.length) return '<div class="empty">Sin inventario en almacenes para los filtros seleccionados.</div>';
+  return '<div class="tw"><div class="tb" style="--cols:minmax(120px,1.2fr) minmax(100px,1fr) minmax(0,1fr) minmax(0,1.2fr) 70px;--mw:560px"><div class="th"><div>Almacén</div><div>Tienda</div><div class="r">Piezas</div><div class="r">Valor a costo</div><div class="r">% valor</div></div>' +
+    rows.map(function (r, j) {
+      var on = S.ch === r.c.ch;
+      var tp = '<div class="h">' + esc(D.dims.ch[r.c.ch]) + ' · ' + esc(D.dims.t[r.c.t]) + '</div>' + Object.keys(r.c.u).map(Number).sort(function (a, b) { return r.c.u[b].v - r.c.u[a].v; }).slice(0, 6).map(function (u) { return '<div class="l"><span>' + esc(D.dims.u[u]) + '</span><b>' + pz(r.c.u[u].q) + ' pzs · ' + money(r.c.u[u].v) + '</b></div>'; }).join('');
+      return '<div class="tr' + (on ? ' on' : '') + '" data-a="pa" data-v="' + r.c.ch + '"' + tipAttr(tp) + ' style="animation-delay:' + (j * 45) + 'ms;cursor:pointer' + (on ? ';background:#EEF2F9' : '') + '"><div class="ell" style="font-weight:600">' + esc(D.dims.ch[r.c.ch]) + '</div><div class="ell">' + esc(D.dims.t[r.c.t]) + '</div><div class="r num"><b>' + pz(r.q) + '</b></div><div class="r num"><b>' + money(r.v) + '</b></div><div class="r num sub">' + share(r.v, TV) + '</div></div>'; }).join('') +
+    '<div class="tr" style="background:#EEF1F5;font-weight:700;border-bottom:0"><div>Total</div><div></div><div class="r num">' + pz(TQ) + '</div><div class="r num">' + money(TV) + '</div><div class="r num">100.00%</div></div></div></div>';
+}
+function vAlmacen(C) {
+  var d1 = C.d1, subLbl = S.mode === 'erp' ? (S.et === 'd' ? ' · Disponible para la venta' : S.et === 'r' ? ' · Reservado' : ' · Total') : '', h = '<div class="view">';
+  var donut = section('v', 'Inventario por almacén', 'piezas y valor a costo al ' + dl(d1) + subLbl + ' · de mayor a menor valor · clic en un renglón para filtrar el almacén · pasa el cursor para ver las ubicaciones', almacenTable(C));
+  var ubic = section('v', 'Inventario por ubicación (ERP)', 'HUB, Proveedores, General, Ventas… · clic para filtrar',
+    K.barlist(C.byUb, function (k) { return D.dims.u[k]; }, 'pu', function (k) { return S.us.length === 1 && S.us[0] === k; }, 'Sin inventario en ubicaciones para los filtros seleccionados.', true));
+  h += '<div class="g12"><div class="c6">' + donut + '</div><div class="c6">' + ubic + '</div></div>';
+  h += section('k', 'Almacén y tienda por ubicación', 'ERP · mapa de calor al ' + dl(d1) + subLbl + ' · pasa el cursor para ver piezas y valor',
+    matrix(C), '<div class="seg2" role="group" aria-label="Métrica"><button class="seg' + (S.mxm === 'q' ? ' on' : '') + '" data-a="mxm" data-v="q">Piezas</button><button class="seg' + (S.mxm === 'v' ? ' on' : '') + '" data-a="mxm" data-v="v">Valor a costo</button></div>');
+  return h + '</div>';
+}
+
+/* ---------- vista 4: movimientos y riesgos ---------- */
+/* advertencia: SKU con existencia que no tuvieron NINGÚN cambio de existencia desde el primer corte hasta el último */
+function warnSection(C, LR) {
+  var rows = LR.list.filter(function (r) { return r.never; }).sort(function (a, b) { return b.v - a.v; });
+  var n = rows.length, q = rows.reduce(function (a, r) { return a + r.q; }, 0), v = rows.reduce(function (a, r) { return a + r.v; }, 0);
+  var head = '<div class="warnhead"><div style="display:flex;gap:12px;align-items:flex-start"><svg width="26" height="26" viewBox="0 0 24 24" role="img" aria-label="Advertencia" style="flex:0 0 auto"><path d="M12 3 2 20h20L12 3z" fill="#E8590C"/><path d="M12 10v4.5" stroke="#fff" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="17.2" r="1.2" fill="#fff"/></svg><div><h2 style="margin:0;font-family:Outfit,sans-serif;font-size:17px;font-weight:600;color:#8A3A07">Advertencia · SKU sin movimiento</h2><div class="sub" style="color:#6B4A2E">SKU con existencia al ' + dl(C.d1) + ' que no tuvieron ningún cambio de existencia entre el ' + dl(0) + ' y el ' + dl(C.d1) + ' · de mayor a menor valor · desliza para verlos todos</div></div></div>' +
+    '<div style="display:flex;flex-wrap:wrap;gap:10px"><div class="stat"><b>SKU</b><span class="big" style="font-size:18px">' + nf.format(n) + '</span></div><div class="stat"><b>Valor detenido</b><span class="big" style="font-size:18px">' + money(v) + '</span></div></div></div>';
+  var body = !n ? '<div class="empty">No hay SKU sin movimiento para los filtros seleccionados.</div>' :
+    '<div style="padding:8px 20px 12px"><div class="tw" style="margin:0 -20px"><div class="tb" style="--cols:28px 130px minmax(0,1fr) 150px 120px 150px 90px;--mw:900px"><div class="th"><div>#</div><div>SKU</div><div>Producto</div><div>Tienda</div><div class="r">Existencia</div><div class="r">Valor a costo</div><div class="r">% del valor</div></div>' +
+    '<div class="wn-scroll" style="max-height:520px;overflow-y:auto">' + rows.map(function (r, j) {
+      return '<div class="tr" style="border-bottom-color:#F3E3D0;animation-delay:' + (Math.min(j, 12) * 40) + 'ms"><div class="num sub">' + (j + 1) + '</div>' + skuBtn(r.k) + '<div class="ell" title="' + esc(D.tit[r.k]) + '">' + esc(D.tit[r.k] || '—') + '</div>' + storeCell(r.st, 'pzs', 'Existencia por tienda') + '<div class="r num">' + pz(r.q) + ' pzs</div><div class="r num"><b>' + money(r.v) + '</b></div><div class="r num sub">' + share(r.v, v) + '</div></div>'; }).join('') + '</div>' +
+    '<div class="tr wn-total" style="background:#FFF1D6;font-weight:700;border-bottom:0"><div></div><div>Total</div><div class="ell">' + nf.format(n) + ' SKU</div><div></div><div class="r num">' + pz(q) + ' pzs</div><div class="r num">' + money(v) + '</div><div class="r num">100.00%</div></div></div></div></div>';
+  return '<section class="card warn" aria-label="Advertencia sin movimiento">' + head + body + '</section>';
+}
+
+function vMov(C, R, LR, NM) {
+  var d1 = C.d1, pv = C.pv, per = C.per, h = '<div class="view">';
+  var neto = per.e - per.s, nv = per.ve - per.vs;
+  h += '<section class="k4" aria-label="Movimiento del periodo">' +
+    kpi('Entradas del periodo', '▲ ' + pz(per.e), 'pzs', money(per.ve), 'a costo', dl(C.ps) + ' → ' + dl(d1), 'var(--in)', '', 'up') +
+    kpi('Salidas del periodo', '▼ ' + pz(per.s), 'pzs', money(per.vs), 'a costo', dl(C.ps) + ' → ' + dl(d1), 'var(--out)', '', 'dn') +
+    kpi('Cambio neto', sg(neto), 'pzs', sgm(nv), 'valor', 'entradas − salidas (variación de existencias)', neto >= 0 ? 'var(--in)' : 'var(--out)', '', cls(neto)) +
+    kpi('SKU con movimiento', nf.format(per.n), 'SKU', money(per.ve + per.vs), 'valor movido', 'con cambio de existencia en el periodo', 'var(--navy)') + '</section>';
+
+  /* cambios entre cortes: tabla con barras que distinguen entradas (verde) y salidas (naranja) */
+  var mxv = Math.max.apply(null, C.periods.map(function (p) { return Math.max(p.ve, p.vs); }).concat([1]));
+  var sum = C.periods.reduce(function (a, p) { a.e += p.e; a.s += p.s; a.ve += p.ve; a.vs += p.vs; return a; }, { e: 0, s: 0, ve: 0, vs: 0 });
+  function pcells(e, s, ve, vs) { var n = e - s, nvv = ve - vs; return '<div class="r">' + two('<span class="up">' + pz(e) + '</span>', money(ve)) + '</div><div class="r">' + two('<span class="dn">' + pz(s) + '</span>', money(vs)) + '</div><div class="r">' + two('<span class="' + cls(n) + '">' + sg(n) + '</span>', sgm(nvv)) + '</div>'; }
+  var cambios = !C.periods.length ? '<div class="empty">Sin periodos: no hay un corte anterior para la selección actual.</div>' :
+    '<div class="tw"><div class="tb" style="--cols:minmax(120px,.8fr) minmax(180px,1.6fr) repeat(3,minmax(0,1fr));--mw:860px"><div class="th"><div>Periodo</div><div>▲ Entradas / ▼ Salidas (valor)</div><div class="r">Entradas</div><div class="r">Salidas</div><div class="r">Neto</div></div>' +
+    C.periods.map(function (p, j) {
+      var tp = '<div class="h">' + dl(p.from) + ' → ' + dl(p.to) + '</div><div class="l"><span>▲ Entradas</span><b>' + pz(p.e) + ' pzs · ' + money(p.ve) + '</b></div><div class="l"><span>▼ Salidas</span><b>' + pz(p.s) + ' pzs · ' + money(p.vs) + '</b></div><div class="sp">Neto ' + sg(p.e - p.s) + ' pzs · ' + sgm(p.ve - p.vs) + '<br>' + pz(p.n) + ' SKU con movimiento</div>';
+      return '<div class="tr"' + tipAttr(tp) + ' style="animation-delay:' + (j * 45) + 'ms;cursor:help"><div class="num"><b>' + dl(p.from) + ' → ' + dl(p.to) + '</b><div class="sub">' + pz(p.n) + ' SKU</div></div>' +
+        '<div class="pbars"><div class="b" title="Entradas"><i style="width:' + Math.max(0.5, p.ve / mxv * 100).toFixed(1) + '%;background:#0E9F8E;animation-delay:' + (j * 70) + 'ms"></i></div><div class="b" title="Salidas"><i style="width:' + Math.max(0.5, p.vs / mxv * 100).toFixed(1) + '%;background:#E8590C;animation-delay:' + (j * 70 + 100) + 'ms"></i></div></div>' + pcells(p.e, p.s, p.ve, p.vs) + '</div>'; }).join('') +
+    '<div class="tr" style="background:#EEF1F5;font-weight:700;border-bottom:0"><div>Total del periodo</div><div></div>' + pcells(sum.e, sum.s, sum.ve, sum.vs) + '</div></div></div>';
+  h += section('b', 'Cambios entre cortes', 'variación de existencias entre cada par de cortes · valor a costo y piezas · pasa el cursor para ver el detalle', cambios,
+    '<div class="slg"><span><i class="swt" style="background:#0E9F8E"></i>Entradas</span><span><i class="swt" style="background:#E8590C"></i>Salidas</span></div>');
+
+  /* SKU con más movimientos */
+  h += K.movSection(S, C, { all: true });
+
+  /* inventario sin movimiento */
+  var nm = ['Se movió hace 7 días o menos', 'Se movió hace 8 a 14 días', 'Sin moverse hace más de 14 días', 'Sin cambios en todo el periodo (' + LR.spanD + '+ días)'], cols = ['#0B7A6E', '#B8862B', '#E8590C', '#E10600'];
+  h += section('', 'Días desde el último movimiento', 'SKU con existencia al ' + dl(d1) + ' · en verde los que se movieron hace poco, en rojo los que llevan tiempo quietos',
+    '<div class="canals">' + NM.b.map(function (x, j) { return '<div class="canal" style="cursor:default;border-left:5px solid ' + cols[j] + ';animation-delay:' + (j * 70) + 'ms"><div class="nm"><span>' + nm[j] + '</span><i>' + share(x.v, NM.tot.v) + '</i></div><div class="num"><b style="font-size:17px">' + nf.format(x.n) + '</b> <span class="sub">SKU · ' + pz(x.q) + ' pzs</span></div><div class="big" style="font-size:16px;color:var(--gold-t)">' + money(x.v) + '</div><div class="shr"><i style="width:' + (NM.tot.v ? Math.min(100, x.v / NM.tot.v * 100) : 0).toFixed(1) + '%;background:' + cols[j] + '"></i></div></div>'; }).join('') + '</div>', '<div class="slg"><span><i class="swt" style="background:#0B7A6E"></i>Se movió hace poco</span><span><i class="swt" style="background:#E10600"></i>Sin movimiento</span></div>');
+
+  /* advertencia: SKU con baja rotación (al final) */
+  h += warnSection(C, LR);
+  return h + '</div>';
+}
+
+/* ---------- render ---------- */
+function render() {
+  var scrollY = window.scrollY, C = E.compute(S), R = E.summary(S, C), LR = E.lowRot(C), NM = E.noMov(C);
+  if (tabsFor().indexOf(S.view) < 0) S.view = 'resumen';
+  var h = K.header({ S: S, C: C, iDisp: iDisp, iRes: iRes, title: 'Dashboard Inventario General', sub: 'ERP y Plataformas', showUb: false, showCat: false, showEt: false, showPlatList: false });
+  h += '<nav class="tabs" role="tablist" aria-label="Vistas">' + VIEWS.filter(function (v) { return tabsFor().indexOf(v[0]) >= 0; }).map(function (v) {
+    return '<button type="button" class="tab' + (S.view === v[0] ? ' on' : '') + '" role="tab" aria-selected="' + (S.view === v[0]) + '" data-a="tab" data-v="' + v[0] + '">' + v[1] + '</button>'; }).join('') + '</nav>';
+  h += S.view === 'canal' ? vCanal(C, R) : S.view === 'almacen' ? vAlmacen(C) : S.view === 'mov' ? vMov(C, R, LR, NM) : vResumen(C, R, LR, NM);
+  h += '<footer>Valores a costo sin IVA. Inventario = ERP + Plataformas aptas y no aptas; en camino, en revisión y extraviadas se muestran aparte. Vendible = Plataformas "Aptas para vender" + ERP "Disponible para la venta" (solo con archivo de disponible). Movimiento = variación de existencias entre cortes (no hay ventas ni compras en los concentrados). ERP y Plataformas son existencias distintas: solo se suman en "Todos"; disponible y reservado clasifican el mismo stock ERP y no se suman al total.</footer></div>';
+  app.innerHTML = h;
+  window.scrollTo(0, scrollY);
+}
+
+K.wire({ app: app, tip: tip, S: S, setS: setS, E: E, extra: {
+  tab: function (el, v) { try { history.replaceState(null, '', '#' + v); } catch (e) {} setS({ view: v, open: null }); },
+  canal: function (el, v) { setS({ canal: v }); },
+  mxm: function (el, v) { setS({ mxm: v }); },
+  gomov: function (el, v) { var cambia = S.mode !== v; try { history.replaceState(null, '', '#mov'); } catch (e) {} setS(Object.assign({ view: 'mov', open: null }, cambia ? { mode: v, et: 't', ts: [], cs: [], us: [], ch: -1, lrB: 'all' } : {})); window.scrollTo(0, 0); },
+  newE: function () { setS({ showNewE: !S.showNewE }); },
+  newP: function () { setS({ showNewP: !S.showNewP }); }
+} });
+render();
+setTimeout(function () { app.classList.remove('first'); }, 2200);
+})();
+</script>
+</body>
+</html>

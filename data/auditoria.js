@@ -1,0 +1,262 @@
+window.AUDITORIA={
+ "PLATAFORMAS": {
+  "filas": 52304,
+  "columnas": [
+   "Fecha",
+   "Plataforma",
+   "Tienda",
+   "Razón social",
+   "Categoría",
+   "SKU CORRECTO",
+   "Título",
+   "Ubicación",
+   "Total",
+   "Costo",
+   "Costo Inventario",
+   "Costo Inventario + IVA"
+  ],
+  "cortes": [
+   "2026-10-01",
+   "2026-10-02",
+   "2026-10-05",
+   "2026-10-09",
+   "2026-10-12",
+   "2026-10-16",
+   "2026-10-19",
+   "2026-10-21",
+   "2026-10-23"
+  ],
+  "skus": 2488,
+  "tiendas": [
+   "ARMAF",
+   "MEDICAL STORE",
+   "MISS ROU",
+   "MX LOVERS",
+   "NEXU STORE",
+   "OCENID",
+   "SELECTSHOP",
+   "SIGNA",
+   "T-LAB"
+  ],
+  "canales_o_almacenes": [
+   "AMAZON",
+   "COPPEL",
+   "LIVERPOOL",
+   "MERCADO LIBRE",
+   "WALMART"
+  ],
+  "ubicaciones_o_estatus": [
+   "Aptas para vender",
+   "Devueltas por el comprador",
+   "En revisión",
+   "En transferencia",
+   "Extraviadas (en búsqueda)",
+   "No aptas para vender",
+   "Pendientes de ingreso"
+  ],
+  "nulos": {},
+  "titulos_con_error": 0,
+  "skus_titulo_error": [],
+  "total_negativo": 0,
+  "costo_cero_con_existencia": 30,
+  "filas_llave_repetida": 2095,
+  "filas_exactas_repetidas": 90,
+  "costo_inventario_no_cuadra": 0,
+  "iva_no_es_116": 9,
+  "skus_con_varios_costos_misma_fecha": 0,
+  "piezas_ultimo_corte": 1105646,
+  "valor_ultimo_corte": 334155197.65,
+  "copias_exactas_con_existencia_ultimo_corte": {
+   "filas": 6,
+   "piezas": 7007,
+   "valor": 1081853.81,
+   "nota": "No se eliminan: pueden ser lotes/series distintos del mismo SKU. Se reportan para que se confirme en el origen."
+  },
+  "piezas_por_corte": {
+   "2026-10-01": 809737,
+   "2026-10-02": 817039,
+   "2026-10-05": 795299,
+   "2026-10-09": 839823,
+   "2026-10-12": 818947,
+   "2026-10-16": 996742,
+   "2026-10-19": 963236,
+   "2026-10-21": 1023441,
+   "2026-10-23": 1105646
+  }
+ },
+ "ERP": {
+  "filas": 207178,
+  "columnas": [
+   "Fecha",
+   "Tienda",
+   "Almacen",
+   "Categoria",
+   "Marca/Clasificacion",
+   "SKU CORRECTO",
+   "Titulo",
+   "Ubicacion",
+   "Total",
+   "Costo",
+   "Costo Inventario",
+   "Costo Inventario + IVA"
+  ],
+  "cortes": [
+   "2026-10-01",
+   "2026-10-02",
+   "2026-10-05",
+   "2026-10-09",
+   "2026-10-12",
+   "2026-10-16",
+   "2026-10-19",
+   "2026-10-21",
+   "2026-10-23"
+  ],
+  "skus": 4402,
+  "tiendas": [
+   "BHBE",
+   "MEDICAL STORE",
+   "MISS ROU",
+   "MX LOVERS",
+   "NEXU STORE",
+   "SELECTSHOP",
+   "T-LAB"
+  ],
+  "canales_o_almacenes": [
+   "IZTAPALAPA",
+   "NAUCALPAN",
+   "TEPOTZOTLAN 2",
+   "TEPOTZOTLAN 3",
+   "TEPOTZOTLAN 3 - MR",
+   "TEPOTZOTLAN 3 - MXL",
+   "TEPOTZOTLAN 4"
+  ],
+  "ubicaciones_o_estatus": [
+   "ACUMULADO",
+   "Almacen 7A",
+   "Almacen 7B",
+   "General",
+   "HUB",
+   "Proveedores",
+   "Venta Deysa",
+   "Venta Directa",
+   "Venta Mayoreo",
+   "Venta Mermas",
+   "Venta MxLovers",
+   "Venta Xitelly",
+   "acumulado"
+  ],
+  "nulos": {},
+  "titulos_con_error": 0,
+  "skus_titulo_error": [],
+  "total_negativo": 0,
+  "costo_cero_con_existencia": 0,
+  "filas_llave_repetida": 49734,
+  "filas_exactas_repetidas": 32611,
+  "costo_inventario_no_cuadra": 0,
+  "iva_no_es_116": 18,
+  "skus_con_varios_costos_misma_fecha": 0,
+  "piezas_ultimo_corte": 4389734,
+  "valor_ultimo_corte": 318351449.2,
+  "copias_exactas_con_existencia_ultimo_corte": {
+   "filas": 37,
+   "piezas": 7415,
+   "valor": 3274706.04,
+   "nota": "No se eliminan: pueden ser lotes/series distintos del mismo SKU. Se reportan para que se confirme en el origen."
+  },
+  "piezas_por_corte": {
+   "2026-10-01": 4218971,
+   "2026-10-02": 4208733,
+   "2026-10-05": 4203243,
+   "2026-10-09": 4638055,
+   "2026-10-12": 4635569,
+   "2026-10-16": 4633353,
+   "2026-10-19": 4660490,
+   "2026-10-21": 4522822,
+   "2026-10-23": 4389734
+  }
+ },
+ "relacion_erp_plataformas": {
+  "corte": "2026-10-23",
+  "skus_solo_erp": 2647,
+  "skus_solo_plataformas": 837,
+  "skus_en_ambas": 1303,
+  "piezas_plataformas_en_skus_tambien_erp": 969134,
+  "piezas_por_tienda": {
+   "ARMAF": {
+    "ERP": 0,
+    "PLATAFORMAS": 4908
+   },
+   "BHBE": {
+    "ERP": 2333717,
+    "PLATAFORMAS": 0
+   },
+   "MEDICAL STORE": {
+    "ERP": 332962,
+    "PLATAFORMAS": 84409
+   },
+   "MISS ROU": {
+    "ERP": 20135,
+    "PLATAFORMAS": 19482
+   },
+   "MX LOVERS": {
+    "ERP": 1,
+    "PLATAFORMAS": 484
+   },
+   "NEXU STORE": {
+    "ERP": 96635,
+    "PLATAFORMAS": 244118
+   },
+   "OCENID": {
+    "ERP": 0,
+    "PLATAFORMAS": 96681
+   },
+   "SELECTSHOP": {
+    "ERP": 1153815,
+    "PLATAFORMAS": 519208
+   },
+   "SIGNA": {
+    "ERP": 0,
+    "PLATAFORMAS": 78773
+   },
+   "T-LAB": {
+    "ERP": 452469,
+    "PLATAFORMAS": 57583
+   }
+  },
+  "nota": "Las dos fuentes son existencias distintas (almacenes ERP vs. inventario en plataformas); no se pueden cruzar pieza a pieza sin una llave física. El dashboard las muestra por separado y su suma solo en 'Todos'."
+ },
+ "disponible": {
+  "corte": "2026-10-23",
+  "empresas_con_archivo": [
+   "BHBE",
+   "MEDICAL STORE",
+   "NEXU STORE",
+   "SELECTSHOP"
+  ],
+  "empresas_sin_archivo": [
+   "T-LAB"
+  ],
+  "disponible": 3884987,
+  "comprometido": 95161,
+  "erp_total_mismas_tiendas": 3917129,
+  "skus_disp_mas_comprometido_mayor_que_erp_total": 1326,
+  "piezas_exceso": 127044,
+  "nota": "Disponible y comprometido son una clasificación del mismo stock del ERP (no se suman al total)."
+ },
+ "indicadores": {
+  "valor_total_y_piezas": "Calculable (Total, Costo Inventario por corte).",
+  "variacion_vs_periodo_anterior": "Calculable entre cortes consecutivos de cada fuente.",
+  "valor_vendible_no_vendible": "Plataformas: calculable por estatus ('Aptas para vender' = vendible). ERP: solo con los archivos DISPONIBLE (un corte, 4 de 5 empresas); no existe estatus de venta en el concentrado ERP.",
+  "inventario_por_canal": "Calculable (columna Plataforma).",
+  "inventario_por_almacen_y_ubicacion": "Calculable (columnas Almacen y Ubicacion del ERP).",
+  "movimientos": "Calculable como variación de existencias entre cortes (no hay ventas ni compras en los concentrados).",
+  "sin_movimiento": "Calculable con los cortes disponibles; la precisión depende de la frecuencia de cortes (hoy cada 1-4 días).",
+  "no_disponible": [
+   "Ventas / rotación real en unidades vendidas",
+   "Precio de venta y margen",
+   "Fecha de entrada del producto (antigüedad real)",
+   "Disponible/reservado histórico (solo hay un corte)",
+   "Disponible de T-LAB"
+  ]
+ }
+};
