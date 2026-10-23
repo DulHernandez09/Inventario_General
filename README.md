@@ -4,7 +4,10 @@ Tres vistas de la misma información (ERP + Plataformas, piezas y valor a costo)
 
 | Archivo | Qué es |
 |---|---|
-| `index_ejecutivo.html` | **Propuesta 2 · Dashboard Inventario General**. Con Fuente = Todos solo muestra *Resumen ejecutivo*; con ERP añade *Inventario por almacén* y *Movimientos y riesgos*; con Plataformas añade *Inventario por canal* y *Movimientos y riesgos*. Filtros: fechas, fuente, tienda y SKU. Con Fuente = ERP el Resumen muestra seis tarjetas: Total, Inventario para venta (disponible sin mermas, venta plataforma ni outlet), Reservado, Mermas, Venta plataforma y Venta Outlet. Enlaces directos: `?fuente=erp`, `?fuente=plat`, `#almacen`, `#canal`, `#mov`. |
+| `index_ejecutivo.html` | **Propuesta 2 · Dashboard Inventario General**. Con Fuente = Todos solo muestra *Resumen ejecutivo*; con ERP añade *Inventario por almacén* y *Movimientos y riesgos*; con Plataformas añade *Inventario por canal* y *Movimientos y riesgos*. Filtros: fechas, fuente, plataforma, tienda y SKU. Con Fuente = ERP el Resumen muestra tres tarjetas: Total, Inventario para venta (disponible) y Reservado. Enlaces directos: `?fuente=erp`, `?fuente=plat`, `#almacen`, `#canal`, `#mov`. |
+| `index.html` | Redirige a `index_ejecutivo.html` (es la página que publica GitHub Pages). |
+| `index_panel_vertical.html` | Panel de administración de inventario (versión vertical; en la carpeta local se llama `index.html`). |
+| `index_horizontal.html` | El mismo panel en columnas para pantalla ancha. |
 
 Se abren con doble clic (no necesitan servidor). Los originales de `ERP\Concentrados` y `PLATAFORMAS\Concentrados` nunca se modifican: los scripts solo los leen.
 
@@ -16,7 +19,7 @@ scripts/armar_disponible.py     Une los 4 archivos DISPONIBLE del ERP en un Exce
 scripts/auditar_concentrados.py Revisión de calidad (duplicados, costos, relación entre fuentes) → data/auditoria.js
 js/engine.js                    Motor de cálculo sin DOM: filtros, existencias, vendible/no vendible, canales, movimientos, SKU nuevos, baja rotación
 js/kit.js                       Componentes de interfaz compartidos (cifras, tablas, aros, barras, filtros, eventos)
-css/                            panel.css (base) · ejecutivo.css
+css/                            panel.css (base) · ejecutivo.css · horizontal.css
 tests/                          Pruebas (ver abajo)
 ```
 

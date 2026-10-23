@@ -4,7 +4,7 @@
  * Lee window.DASHBOARD_DATA (generado por scripts/generar_datos.py) y calcula, para un estado de filtros S,
  * todo lo que muestran las vistas: existencias por corte, clasificación vendible / no vendible, canales,
  * almacenes y ubicaciones, movimientos entre cortes, SKU nuevos, baja rotación y alertas.
- * Lo usa index_ejecutivo.html; la interfaz solo dibuja lo que este módulo devuelve.
+ * Lo usan index.html, index_horizontal.html e index_ejecutivo.html; la interfaz solo dibuja lo que este módulo devuelve.
  *
  * Formato de datos:
  *   st  = [src, ch, t, c, u, di, q, v]            existencias agregadas por corte

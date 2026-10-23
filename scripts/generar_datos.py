@@ -10,7 +10,7 @@ Columnas que se buscan (sin importar mayúsculas/acentos): Fecha, Tienda, Almace
 Ubicacion (opcional), SKU CORRECTO (o SKU), Titulo (opcional), Disponible, Reservado, Costo.
 
 Salida:
-    data/dashboard_data.js   (lo carga index_ejecutivo.html; funciona abriendo el archivo con doble clic)
+    data/dashboard_data.js   (lo carga index.html; funciona abriendo el archivo con doble clic)
     data/dashboard_data.json (misma información en JSON)
 
 Cada archivo es una serie de "cortes" (fotos diarias del inventario). Un movimiento es la
