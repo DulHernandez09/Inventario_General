@@ -4,8 +4,7 @@ Tres vistas de la misma información (ERP + Plataformas, piezas y valor a costo)
 
 | Archivo | Qué es |
 |---|---|
-| `index_ejecutivo.html` | **Propuesta 2 · Dashboard Inventario General**. Con Fuente = Todos solo muestra *Resumen ejecutivo*; con ERP añade *Inventario por almacén* y *Movimientos y riesgos*; con Plataformas añade *Inventario por canal* y *Movimientos y riesgos*. Filtros: fechas, fuente, plataforma, tienda y SKU. Con Fuente = ERP el Resumen muestra tres tarjetas: Total, Inventario para venta (disponible) y Reservado. Enlaces directos: `?fuente=erp`, `?fuente=plat`, `#almacen`, `#canal`, `#mov`. |
-| `index_ejecutivo.html` | Dashboard Inventario General (única página del proyecto). |
+| `index_ejecutivo.html` | **Propuesta 2 · Dashboard Inventario General**. Con Fuente = Todos solo muestra *Resumen ejecutivo*; con ERP añade *Inventario por almacén* y *Movimientos y riesgos*; con Plataformas añade *Inventario por canal* y *Movimientos y riesgos*. Filtros: fechas, fuente, tienda y SKU. Con Fuente = ERP el Resumen muestra seis tarjetas: Total, Inventario para venta (disponible sin mermas, venta plataforma ni outlet), Reservado, Mermas, Venta plataforma y Venta Outlet. Enlaces directos: `?fuente=erp`, `?fuente=plat`, `#almacen`, `#canal`, `#mov`. |
 
 Se abren con doble clic (no necesitan servidor). Los originales de `ERP\Concentrados` y `PLATAFORMAS\Concentrados` nunca se modifican: los scripts solo los leen.
 
