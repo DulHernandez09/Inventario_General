@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Concentración del valor del inventario · selectshop</title>
+<link rel="stylesheet" href="css/valor.css">
+</head>
+<body>
+<div id="app"></div>
+<script src="data/dashboard_data.js"></script>
+<script src="js/engine.js"></script>
+<script>
+/* Concentración del valor del inventario: total → almacén / canal → categoría → SKU.
+   Cálculo: js/engine.js (valor, concentracion, validar, ficha) sobre data/dashboard_data.js (generado por scripts/generar_datos.py).
+   Este archivo solo maneja el estado de navegación y dibuja. */
+(function () {
+'use strict';
+var D = window.DASHBOARD_DATA, E = InvEngine.create(D), app = document.getElementById('app'), ND = D.dates.length;
+var S = { fus: [], chs: [], ts: [], ms: null, view: 'inv', sq: '', sp: 50, exp: {}, d: ND - 1, tab: 'alm', fu: -1, c: -1, q: '', sort: 'v', dir: -1, page: 100, ficha: null, alert: null, allCats: false };
+var nf = new Intl.NumberFormat('es-MX'), mf = new Intl.NumberFormat('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function pz(n) { return nf.format(Math.round(n)); }
+function full(n) { return '$' + mf.format(n); }
+function M(n) { return '$' + mf.format(n / 1e6) + ' M'; }
+function mm(n) { return '<span title="' + full(n) + '">' + M(n) + '</span>'; }
+function pc(a, b) { return b > 0 ? mf.format(a / b * 100) + '%' : '—'; }
+function sgn(n) { return (n > 0 ? '+' : n < 0 ? '−' : '') + nf.format(Math.abs(Math.round(n))); }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+function dl(i) { var t = D.dates[i].split('-'); return t[2] + '/' + t[1] + '/' + t[0]; }
+function chName(i) { return D.dims.ch[i]; }
+function catName(i) { return D.dims.c[i]; }
+function srcOfCh(ch, V) { return V.alm.some(function (a) { return a.ch === ch; }) ? 0 : V.can.some(function (a) { return a.ch === ch; }) ? 1 : (D.st.some(function (r) { return r[1] === ch && r[0] === 0; }) ? 0 : 1); }
+
+/* ---------- datos del estado actual ---------- */
+S.ds = D.dates.map(function (x, i) { return i; });
+function setD() { S.d = Math.max.apply(null, S.ds); }
+function allDs() { return D.dates.map(function (x, i) { return i; }); }
+function perLabel() {
+  var s = S.ds.slice().sort(function (a, b) { return a - b; });
+  if (s.length === ND) return dl(0) + ' → ' + dl(ND - 1);
+  if (s.length === 1) return dl(s[0]);
+  return s.length <= 4 ? s.map(dd).join(', ') : dd(s[0]) + ' … ' + dd(s[s.length - 1]) + ' (' + s.length + ' cortes)';
+}
+function U() { return { fuente: S.fu, t: S.ts }; }
+function setFu() { S.fu = S.fus.length === 1 ? S.fus[0] : -1; }
+function chText() { return S.chs.length <= 2 ? S.chs.map(chName).join(' + ') : S.chs.length + ' almacenes / canales'; }
+function chCtx(V) { return S.chs.length === 1 ? (srcOfCh(S.chs[0], V) === 0 ? 'almacén ' : 'canal ') + chName(S.chs[0]) : S.chs.length ? chText() : 'inventario total'; }
+function model() {
+  var base = E.valor(S.d, {}, U()), F = {};
+  if (S.chs.length) F.ch = S.chs;
+  if (S.c >= 0) F.c = S.c;
+  var V = (S.chs.length || S.c >= 0) ? E.valor(S.d, F, U()) : base;
+  /* categorías dentro de la selección de almacén/canal (sin elegir categoría) para poder mostrar el ranking completo aunque haya una categoría elegida */
+  var Vc = S.c >= 0 ? E.valor(S.d, S.chs.length ? { ch: S.chs } : {}, U()) : V;
+  return { base: base, V: V, Vc: Vc, F: F };
+}
+
+/* ---------- piezas de interfaz ---------- */
+function section(n, title, sub, body, extra) {
+  return '<section class="card sec"><div class="sh"><h2><span class="n">' + n + '</span>' + esc(title) + '</h2><span class="sub">' + sub + '</span></div>' + (extra || '') + body + '</section>';
+}
+function bar(v, tot, cls) { var p = tot > 0 ? Math.max(0, Math.min(100, v / tot * 100)) : 0; return '<div class="bar ' + (cls || '') + '"><i style="width:' + p + '%"></i><b class="num">' + pc(v, tot) + '</b></div>'; }
+function table(cols, head, rows, mw) {
+  return '<div class="tw"><div class="t" style="--cols:' + cols + ';--mw:' + (mw || 640) + 'px"><div class="th">' + head.join('') + '</div>' + rows + '</div></div>';
+}
+
+function universo() { var a = []; if (S.fu >= 0) a.push(S.fu === 0 ? 'ERP' : 'Plataformas'); if (S.ts.length) a.push(S.ts.map(function (x) { return D.dims.t[x]; }).join(' + ')); return a.length ? ' · ' + esc(a.join(' · ')) : ''; }
+function chk(k, id, text, on, sub) { return '<label class="mo"><input type="checkbox" data-a="mschk" data-k="' + k + '" value="' + id + '"' + (on ? ' checked' : '') + '><span class="mot">' + esc(text) + '</span>' + (sub ? '<span class="sub num">' + sub + '</span>' : '') + '</label>'; }
+function msel(k, label, summary, body, n, hdr) {
+  var open = S.ms === k;
+  return '<div class="fl"><span>' + label + '</span><div class="ms' + (open ? ' open' : '') + '"><button class="msb" data-a="msopen" data-v="' + k + '" aria-haspopup="listbox" aria-expanded="' + open + '"><span class="mst">' + esc(summary) + '</span><span class="car">▾</span></button>' +
+    (open ? '<div class="mp" role="group" aria-label="' + esc(label) + '"><div class="mph">' + (hdr || '<span>' + (n ? n + ' seleccionada' + (n === 1 ? '' : 's') : 'Sin selección = todas') + '</span><button class="lnk" data-a="msclear" data-v="' + k + '">Limpiar</button>') + '</div>' + body + '</div>' : '') + '</div></div>';
+}
+function filtros(m) {
+  var V = m.base, tn = E.tiendas(S.d, S.fu);
+  function opts(list) { return list.map(function (x) { return chk('ch', x.ch, chName(x.ch), S.chs.indexOf(x.ch) >= 0, M(x.v)); }).join(''); }
+  var cb = (S.fu !== 1 && V.alm.length ? '<div class="mg">Almacenes (ERP)</div>' + opts(V.alm) : '') + (S.fu !== 0 && V.can.length ? '<div class="mg">Canales (Plataformas)</div>' + opts(V.can) : '');
+  function sum(arr, names, todos) { return !arr.length ? todos : arr.length === 1 ? names(arr[0]) : arr.length + ' seleccionados'; }
+  var dsum = S.ds.length === ND ? 'Todos los cortes (' + ND + ')' : S.ds.length === 1 ? 'Corte ' + dl(S.ds[0]) : S.ds.length + ' cortes · hasta ' + dd(S.d);
+  var dbody = D.dates.map(function (x, k) { return k; }).reverse().map(function (k) { return chk('d', k, dl(k), S.ds.indexOf(k) >= 0); }).join('');
+  var dhdr = '<span>' + S.ds.length + ' de ' + ND + '</span><span><button class="lnk" data-a="msall" data-v="d">Todos</button> <button class="lnk" data-a="mslast" data-v="d">Solo el último</button></span>';
+  return '<div class="row3">' +
+    msel('d', 'Fecha de corte', dsum, dbody, S.ds.length, dhdr) +
+    msel('fu', 'Fuente', S.fus.length === 1 ? (S.fus[0] === 0 ? 'ERP' : 'Plataformas') : 'General', chk('fu', 0, 'ERP', S.fus.indexOf(0) >= 0) + chk('fu', 1, 'Plataformas', S.fus.indexOf(1) >= 0), S.fus.length) +
+    msel('ch', 'Canal / almacén', sum(S.chs, chName, 'Todos'), cb, S.chs.length) +
+    msel('t', 'Tienda', sum(S.ts, function (x) { return D.dims.t[x]; }, 'Todas'), tn.map(function (x) { return chk('t', x.t, x.name, S.ts.indexOf(x.t) >= 0, M(x.v)); }).join(''), S.ts.length) + '</div>';
+}
+function topBar(m) {
+  var V = m.base, crumbs = '<button class="crumb' + (!S.chs.length && S.c < 0 && S.ficha == null ? ' cur' : '') + '" data-a="go" data-v="0">Inventario total</button>';
+  if (S.chs.length) crumbs += '<span class="sep">›</span><button class="crumb' + (S.c < 0 && S.ficha == null ? ' cur' : '') + '" data-a="go" data-v="1" title="' + esc(chText()) + '">' + esc(S.chs.length === 1 ? (srcOfCh(S.chs[0], V) === 0 ? 'Almacén · ' : 'Canal · ') + chName(S.chs[0]) : chText()) + '</button>';
+  if (S.c >= 0) crumbs += '<span class="sep">›</span><button class="crumb' + (S.ficha == null ? ' cur' : '') + '" data-a="go" data-v="2" title="' + esc(catName(S.c)) + '">' + esc('Categoría · ' + catName(S.c)) + '</button>';
+  if (S.ficha != null) crumbs += '<span class="sep">›</span><button class="crumb cur" title="' + esc(D.skus[S.ficha]) + '">' + esc('SKU · ' + D.skus[S.ficha]) + '</button>';
+  var deep = S.chs.length || S.c >= 0 || S.ficha != null;
+  var dis = deep || S.q || S.fus.length || S.ts.length || S.ds.length < ND ? '' : ' disabled';
+  return '<div class="strip"><img src="assets/arrows.webp" alt=""><div><h1>Inventario General</h1></div><img src="assets/arrows.webp" alt=""></div>' +
+    '<div class="top"><div class="navb"><div class="in"><a class="brand" href="./" aria-label="selectshop"><img src="assets/logo_selectshop.webp" alt="selectshop"></a>' +
+    '<div class="crumbs" aria-label="Ruta de navegación">' + (deep ? crumbs : '') + '</div>' +
+    '<div class="tools">' +
+    '<button class="tbtn" data-a="back"' + (deep ? '' : ' disabled') + '>← Nivel anterior</button><button class="tbtn" data-a="reset"' + dis + '>Restablecer filtros</button></div></div></div>' +
+    '<div class="vtabs"><div class="in"><button data-a="view" data-v="inv" class="' + (S.view === 'inv' ? 'on' : '') + '">Inventario</button><button data-a="view" data-v="mov" class="' + (S.view === 'mov' ? 'on' : '') + '">Movimientos y advertencias</button></div></div>' +
+    '<div class="filters"><div class="in">' + filtros(m) + '</div></div></div>';
+}
+
+function nivel1(m) {
+  var V = m.base, SR = E.serie(S.d, U()), ss = S.ds.slice().sort(function (a, b) { return a - b; }), prevD = ss.length > 1 ? ss[ss.length - 2] : S.d - 1, p = ss.length > 1 ? E.valor(prevD, {}, U()).ref : V.prev;
+  var avgSel = ss.reduce(function (a, k) { return a + SR.cortes[k].q; }, 0) / ss.length, dq = p ? V.ref.q - p.q : 0, dv = p ? V.ref.v - p.v : 0;
+  var meta = D.meta && D.meta.generado ? D.meta.generado.replace('T', ' ') : '';
+  var vr = p ? '<span class="v">' + (dv >= 0 ? '▲ ' : '▼ ') + '<span class="' + (dv >= 0 ? 'up' : 'dn') + '">' + (dv >= 0 ? '+' : '−') + mf.format(Math.abs(dv) / 1e6) + ' M</span></span><span class="s num ' + (dv >= 0 ? 'up' : 'dn') + '">' + (dv >= 0 ? '+' : '−') + mf.format(Math.abs(dv / p.v * 100)) + '% · ' + sgn(dq) + ' pzs</span><span class="s">vs corte ' + dl(prevD) + '</span>'
+    : '<span class="v">—</span><span class="s">Sin corte anterior comparable</span>';
+  function sv(L) { return L.reduce(function (s, x) { return s + x.v; }, 0); }
+  var vE = sv(V.alm), vP = sv(V.can), rf = V.ref.v, top = V.cias[0], tA = V.alm[0], tC = V.can[0];
+  function mini(l, v, s) { return '<div class="rs"><div class="rl">' + l + '</div><div class="rv num">' + v + '</div>' + (s ? '<div class="rn">' + s + '</div>' : '') + '</div>'; }
+  var pE = rf ? vE / rf * 100 : 0;
+  var how = '<div class="how"><div class="hh">Resumen del inventario</div><div class="rsg">' +
+    '<div class="rs wide"><div class="rl">Composición por fuente</div><div class="rbar" title="ERP ' + pc(vE, rf) + ' · Plataformas ' + pc(vP, rf) + '"><i style="width:' + pE.toFixed(2) + '%"></i></div>' +
+    '<div class="rlg"><span><i class="d1"></i>ERP <b class="num">' + M(vE) + '</b> · ' + pc(vE, rf) + '</span><span><i class="d2"></i>Plataformas <b class="num">' + M(vP) + '</b> · ' + pc(vP, rf) + '</span></div></div>' +
+    (top ? mini('Mayor grupo', esc(top.n), M(top.v) + ' · ' + pc(top.v, rf) + ' del total') : '') +
+    (tA ? mini('Mayor almacén (ERP)', esc(chName(tA.ch)), M(tA.v) + ' · ' + pc(tA.v, rf) + ' del total') : '') +
+    (tC ? mini('Mayor canal (Plataformas)', esc(chName(tC.ch)), M(tC.v) + ' · ' + pc(tC.v, rf) + ' del total') : '') +
+    '</div></div>';
+  return section(1, 'Valor total del inventario', 'punto de partida: representa el 100% · el análisis se centra en el valor a costo',
+    '<div class="kpis">' +
+    '<div class="card kpi main"><div class="t">Valor del inventario</div><div class="v num" title="' + full(V.ref.v) + '">' + M(V.ref.v) + '</div><div class="s num">a costo · <b>' + pz(V.ref.q) + '</b> piezas</div></div>' +
+    '<div class="card kpi"><div class="t">Variación vs corte anterior</div>' + vr + '</div>' +
+    '<div class="card kpi"><div class="t">Piezas promedio</div><div class="v num">' + pz(avgSel) + '</div></div>' +
+    '<div class="card kpi"><div class="t">Fecha de corte</div><div class="v num">' + dl(S.d) + '</div><div class="s">' + (S.ds.length > 1 ? S.ds.length + ' cortes seleccionados · ' : '') + 'actualizado: ' + esc(meta || 'sin dato') + '</div></div>'  + '</div>' + how);
+}
+
+function rankRows(list, V, kind) {
+  var tot = V.ref.v, uni = list.reduce(function (a, x) { return a + x.v; }, 0), rows = '';
+  list.forEach(function (x) {
+    var on = S.chs.indexOf(x.ch) >= 0;
+    var key = kind + '|' + x.ch, open = !!S.exp[key];
+    rows += '<div class="tr click' + (on ? ' on' : '') + '" data-a="ch" data-v="' + x.ch + '" title="Clic para profundizar en ' + esc(chName(x.ch)) + '"><div class="ell"><button class="chev' + (open ? ' open' : '') + '" data-a="exp" data-v="' + key + '" aria-expanded="' + open + '" aria-label="' + (kind === 0 ? 'Ver ubicaciones de ' : 'Ver estatus de ') + esc(chName(x.ch)) + '" title="' + (kind === 0 ? 'Ver ubicaciones' : 'Ver estatus') + '">▸</button><b>' + esc(chName(x.ch)) + '</b></div><div class="r num">' + mm(x.v) + '</div><div class="r num sub">' + pz(x.q) + '</div>' +
+      '<div>' + bar(x.v, tot, kind === 0 ? 'dark' : '') + '</div></div>';
+    if (open) E.desglose(S.d, x.ch, kind, U()).forEach(function (d) {
+      rows += '<div class="tr det"><div class="ell">' + esc(d.name) + ' <span class="sub">' + (kind === 0 ? 'ubicación' : 'estatus') + '</span></div><div class="r num">' + mm(d.v) + '</div><div class="r num sub">' + pz(d.q) + '</div><div>' + bar(d.v, tot, 'teal') + '</div></div>';
+    });
+  });
+  rows += '<div class="tr tot"><div>Total ' + (kind === 0 ? 'ERP' : 'Plataformas') + '</div><div class="r num">' + mm(uni) + '</div><div class="r num">' + pz(list.reduce(function (a, x) { return a + x.q; }, 0)) + '</div><div class="num">' + pc(uni, tot) + ' del total</div></div>';
+  return table('minmax(150px,1.4fr) minmax(0,.8fr) minmax(0,.9fr) minmax(160px,1.8fr)',
+    ['<div>' + (kind === 0 ? 'Almacén' : 'Canal') + '</div>', '<div class="r">Valor</div>', '<div class="r">Piezas</div>', '<div>% del total de inventario</div>'], rows, 560);
+}
+function nivel2(m) {
+  var V = m.base, tab = S.fu === 0 ? 'alm' : S.fu === 1 ? 'can' : S.tab;
+  var tabs = S.fu >= 0 ? '' : '<div class="tabs" role="tablist"><button data-a="tab" data-v="alm" class="' + (tab === 'alm' ? 'on' : '') + '">Almacén (ERP)</button><button data-a="tab" data-v="can" class="' + (tab === 'can' ? 'on' : '') + '">Canal (Plataformas)</button></div>';
+  var list = tab === 'alm' ? V.alm : V.can, kind = tab === 'alm' ? 0 : 1;
+  var allOpen = list.length > 0 && list.every(function (x) { return S.exp[kind + '|' + x.ch]; });
+  tabs = '<div class="tbar">' + tabs + (list.length ? '<button class="btn sm" data-a="expall" data-v="' + (allOpen ? 0 : 1) + '|' + tab + '">' + (allOpen ? '▾ Contraer todo' : '▸ Expandir todo') + '</button>' : '') + '</div>';
+  return section(3, 'Concentración por almacén y canal', 'ordenado de mayor a menor valor · ▸ despliega ubicaciones (ERP) o estatus (Plataformas) · clic en la fila para profundizar',
+    list.length ? rankRows(list, V, tab === 'alm' ? 0 : 1) : '<div class="empty">Sin ' + (tab === 'alm' ? 'almacenes' : 'canales') + ' para los filtros actuales.</div>', tabs);
+}
+
+function nivel3(m) {
+  var V = m.Vc, ref = m.base.ref.v, parent = V.sel.v, rows = '', cum = 0;
+  var ctx = chCtx(m.base);
+  V.cats.forEach(function (c, ix) {
+    cum += c.v; var on = S.c === c.c; if (!S.allCats && ix >= 15 && !on) return;
+    rows += '<div class="tr click' + (on ? ' on' : '') + '" data-a="cat" data-v="' + c.c + '"><div class="ell"><b>' + esc(catName(c.c)) + '</b></div><div class="r num">' + mm(c.v) + '</div><div class="r num sub">' + pz(c.q) + '</div><div>' + bar(c.v, ref, 'orange') + '</div>' + (S.chs.length ? '<div class="r num">' + pc(c.v, parent) + '</div>' : '') + '</div>';
+  });
+  var hid = S.allCats ? 0 : V.cats.length - 15;
+  if (hid > 0) rows += '<div class="tr"><div class="sub">… y ' + hid + ' categorías más, de menor valor</div></div>';
+  rows += '<div class="tr tot"><div>Total ' + esc(ctx) + '</div><div class="r num">' + mm(parent) + '</div><div class="r num">' + pz(V.sel.q) + '</div><div class="num">' + pc(parent, ref) + ' del total</div>' + (S.chs.length ? '<div class="r num">100.00%</div>' : '') + '</div>';
+  return section(5, 'Concentración por categoría', 'categorías que integran el ' + esc(ctx) + ' · porcentaje sobre el total de inventario' + (S.chs.length ? ' y sobre la selección' : '') + ' · clic para ver sus SKU',
+    table('minmax(150px,1.5fr) minmax(0,.8fr) minmax(0,.9fr) minmax(160px,1.8fr)' + (S.chs.length ? ' minmax(0,.9fr)' : ''),
+      ['<div>Categoría</div>', '<div class="r">Valor</div>', '<div class="r">Piezas</div>', '<div>% del total de inventario</div>'].concat(S.chs.length ? ['<div class="r">% de la selección</div>'] : []), rows, 600) + (V.cats.length > 15 ? '<div style="text-align:center"><button class="btn" data-a="cats">' + (S.allCats ? 'Mostrar solo las 15 principales' : 'Ver las ' + V.cats.length + ' categorías') + '</button></div>' : ''));
+}
+
+/* ---------- SKU ---------- */
+function skuRows(m) {
+  var V = m.V, parent = S.c >= 0 ? (m.Vc.cats.filter(function (c) { return c.c === S.c; })[0] || { v: 0 }).v : V.sel.v;
+  var q = S.q.trim().toLowerCase(), list = V.skus.map(function (s) {
+    var tit = D.tit[s.k] || '', locs = Object.keys(s.loc);
+    return { s: s, sku: D.skus[s.k], tit: tit, cat: catName(s.c), loc: locs.length === 1 ? chName(+locs[0].split('|')[1]) : locs.length + ' ubicaciones', v: s.v, q: s.q, cu: s.cu, g: s.v, i: s.v, cum: s.cum };
+  });
+  if (q) list = list.filter(function (r) { return (r.sku + ' ' + r.tit).toLowerCase().indexOf(q) >= 0; });
+  var k = S.sort, d = S.dir;
+  list.sort(function (a, b) { var x = a[k], y = b[k]; if (typeof x === 'string') return d * x.localeCompare(y, 'es'); return d * (x - y) || b.v - a.v; });
+  return { list: list, parent: parent };
+}
+function nivel4(m) {
+  var R = skuRows(m), ref = m.base.ref.v, shown = R.list.slice(0, S.page), hasSel = S.chs.length || S.c >= 0;
+  function th(k, label, right) { return '<div class="' + (right ? 'r ' : '') + 'sortable" data-a="sort" data-v="' + k + '">' + label + (S.sort === k ? (S.dir < 0 ? ' ▼' : ' ▲') : '') + '</div>'; }
+  var rows = shown.map(function (r, i) {
+    return '<div class="tr click" data-a="sku" data-v="' + r.s.k + '"><div class="num sub">' + r.s.rank + '</div><div class="ell"><b>' + esc(r.sku) + '</b></div><div class="ell" title="' + esc(r.tit) + '">' + esc(r.tit || 'Sin nombre en el concentrado') + '</div><div class="ell">' + esc(r.cat) + '</div><div class="ell" title="' + esc(r.loc) + '">' + esc(r.loc) + '</div>' +
+      '<div class="r num">' + pz(r.q) + '</div><div class="r num">' + full(r.cu) + '</div><div class="r num">' + full(r.v) + '</div><div class="r num">' + pc(r.v, ref) + '</div>' + (hasSel ? '<div class="r num">' + pc(r.v, R.parent) + '</div>' : '') + '</div>';
+  }).join('') || '<div class="empty">Sin SKU para la selección y la búsqueda actuales.</div>';
+  var tq = R.list.reduce(function (a, r) { return a + r.q; }, 0), tv = R.list.reduce(function (a, r) { return a + r.v; }, 0);
+  rows += '<div class="tr tot"><div></div><div>' + pz(R.list.length) + ' SKU' + (S.q ? ' (búsqueda)' : '') + '</div><div></div><div></div><div></div><div class="r num">' + pz(tq) + '</div><div class="r num">' + (tq ? full(tv / tq) : '—') + '</div><div class="r num">' + full(tv) + '</div><div class="r num">' + pc(tv, ref) + '</div>' + (hasSel ? '<div class="r num">' + pc(tv, R.parent) + '</div>' : '') + '</div>';
+  var more = R.list.length > S.page ? '<div style="text-align:center"><button class="btn" data-a="more">Mostrar 100 SKU más (' + pz(R.list.length - S.page) + ' restantes)</button></div>' : '';
+  var padre = S.c >= 0 ? 'la categoría' : S.chs.length ? 'el almacén/canal' : 'el total';
+  var search = '<div class="search"><input type="search" placeholder="Buscar por SKU o descripción" value="' + esc(S.q) + '" data-a="q" aria-label="Buscar SKU o descripción"><span class="sub">ordena por cualquier columna · clic en un SKU para ver su ficha</span></div>';
+  return section(6, 'Detalle por SKU', 'valor = cantidad × costo unitario · % sobre el total de inventario' + (hasSel ? ' y sobre ' + padre + ' seleccionado/a' : ''),
+    search + table('44px minmax(90px,.8fr) minmax(180px,2fr) minmax(110px,1fr) minmax(110px,1fr) minmax(0,.7fr) minmax(0,.8fr) minmax(0,1fr) minmax(0,.7fr)' + (hasSel ? ' minmax(0,.8fr)' : ''),
+      ['<div>#</div>', th('sku', 'SKU'), th('tit', 'Descripción'), th('cat', 'Categoría'), th('loc', 'Almacén / canal'), th('q', 'Cantidad', 1), th('cu', 'Costo unit.', 1), th('v', 'Valor', 1), th('g', '% del total', 1)].concat(hasSel ? [th('i', '% de la selección', 1)] : []), rows, 1050) + more);
+}
+
+
+/* ---------- tendencia: valor y piezas por corte, en una sola gráfica ---------- */
+function comboChart(pts) {
+  var W = 1000, H = 270, L = 84, R = 92, T = 16, B = 28, n = pts.length;
+  var qs = pts.map(function (p) { return p.q; }), vs = pts.map(function (p) { return p.v; });
+  var qmx = Math.max.apply(null, qs) || 1, vmx = Math.max.apply(null, vs), vmn = Math.min.apply(null, vs), pad = (vmx - vmn) * 0.2 || vmx * 0.02 || 1;
+  vmn = Math.max(0, vmn - pad); vmx = vmx + pad; if (vmx === vmn) vmx = vmn + 1;
+  function X(i) { return L + (W - L - R) * (i + 0.5) / n; }
+  function YQ(q) { return T + (H - T - B) * (1 - q / qmx); }
+  function YV(v) { return T + (H - T - B) * (1 - (v - vmn) / (vmx - vmn)); }
+  var g = '', i;
+  for (i = 0; i <= 3; i++) {
+    var y = T + (H - T - B) * (1 - i / 3);
+    g += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y + '" y2="' + y + '" stroke="#E6E6E6"/>' +
+      '<text x="' + (L - 8) + '" y="' + (y + 4) + '" text-anchor="end" font-size="11" fill="#E83900">' + pz(qmx * i / 3) + '</text>' +
+      '<text x="' + (W - R + 8) + '" y="' + (y + 4) + '" font-size="11" fill="#111111">' + M(vmn + (vmx - vmn) * i / 3) + '</text>';
+  }
+  var bw = Math.min(54, (W - L - R) / n * 0.55), bars = '', line = '', dots = '', lab = '', hit = '', slot = (W - L - R) / n;
+  pts.forEach(function (p, k) {
+    var sel = p.di === S.d;
+    bars += '<rect x="' + (X(k) - bw / 2) + '" y="' + YQ(p.q) + '" width="' + bw + '" height="' + Math.max(1, YQ(0) - YQ(p.q)) + '" rx="4" fill="#FF541C" opacity="' + (sel ? 0.55 : 0.28) + '"/>';
+    line += (k ? 'L' : 'M') + X(k) + ' ' + YV(p.v) + ' ';
+    dots += '<circle cx="' + X(k) + '" cy="' + YV(p.v) + '" r="' + (sel ? 6 : 3.5) + '" fill="' + (sel ? '#111111' : '#fff') + '" stroke="#111111" stroke-width="2"/>';
+    lab += '<text x="' + X(k) + '" y="' + (H - 8) + '" text-anchor="middle" font-size="11" fill="' + (sel ? '#111111' : '#666666') + '" font-weight="' + (sel ? 700 : 400) + '">' + dl(p.di).slice(0, 5) + '</text>';
+    hit += '<rect class="hit" x="' + (X(k) - slot / 2) + '" y="0" width="' + slot + '" height="' + H + '" fill="transparent" data-tip="' + esc(dl(p.di) + ' · ' + M(p.v) + ' · ' + pz(p.q) + ' pzs') + '"/>';
+  });
+  return '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Tendencia de valor y piezas por corte" style="display:block">' + g + bars +
+    '<path d="' + line + '" fill="none" stroke="#111111" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>' + dots + lab + hit + '</svg>';
+}
+function tendencia(m) {
+  var F = {}; if (S.chs.length) F.ch = S.chs; if (S.c >= 0) F.c = S.c;
+  var pts = E.tendencia(F, U()), ctx = (S.chs.length ? chText() : 'Inventario total') + (S.c >= 0 ? ' · ' + catName(S.c) : '') + universo();
+  var first = pts[0], cur = pts[S.d], dv = cur.v - first.v;
+  var head = '<div class="sub"><b>' + esc(ctx) + '</b> · del ' + dl(0) + ' al ' + dl(ND - 1) + ' · el corte seleccionado (' + dl(S.d) + ') va resaltado</div>';
+  var leg = '<div class="legend"><span><i class="lg line"></i>Valor del inventario <b>(eje derecho)</b>: ' + M(first.v) + ' → ' + M(cur.v) + ' · <span class="' + (dv >= 0 ? 'up' : 'dn') + '">' + (dv >= 0 ? '+' : '−') + M(Math.abs(dv)) + '</span></span>' +
+    '<span><i class="lg bar"></i>Piezas <b>(eje izquierdo)</b>: ' + pz(first.q) + ' → ' + pz(cur.q) + '</span></div>';
+  return section(2, 'Tendencia del inventario', 'valor y piezas por corte · sigue la selección y los filtros activos', head + leg + comboChart(pts));
+}
+
+/* ---------- concentrado por compañía (aro) ---------- */
+var CIA_COL = { 'Select Shop': '#111111', 'Bloom & Blush': '#FF541C', 'Sin compañía': '#B5B5B5' };
+function donut(list, tot) {
+  var r = 74, C = 2 * Math.PI * r, off = 0, segs = '';
+  list.forEach(function (x, i) {
+    var len = tot > 0 ? x.v / tot * C : 0, col = CIA_COL[x.n] || ['#FF541C', '#666666', '#B5B5B5'][i % 3];
+    segs += '<circle class="hit" cx="100" cy="100" r="' + r + '" fill="none" stroke="' + col + '" stroke-width="30" stroke-dasharray="' + Math.max(0, len - 2) + ' ' + (C - Math.max(0, len - 2)) + '" stroke-dashoffset="' + (-off) + '" transform="rotate(-90 100 100)" data-tip="' + esc(x.n + ' · ' + M(x.v) + ' · ' + pz(x.q) + ' pzs · ' + pc(x.v, tot)) + '"/>';
+    off += len;
+  });
+  return '<svg viewBox="0 0 200 200" width="220" height="220" role="img" aria-label="Valor por compañía"><circle cx="100" cy="100" r="' + r + '" fill="none" stroke="#F1F1F1" stroke-width="30"/>' + segs +
+    '<text x="100" y="96" text-anchor="middle" font-size="20" font-weight="700" fill="#111111" font-family="Graphik,Arial,Helvetica,sans-serif">' + M(tot) + '</text><text x="100" y="116" text-anchor="middle" font-size="11" fill="#666666">valor a costo</text></svg>';
+}
+function nivelCia(m) {
+  var V = m.V, L = V.cias, tot = L.reduce(function (a, x) { return a + x.v; }, 0), ref = m.base.ref.v, tq = L.reduce(function (a, x) { return a + x.q; }, 0);
+  function col(x) { return CIA_COL[x.n] || '#FF541C'; }
+  var strip = '<div class="gstack" role="img" aria-label="Distribución del valor por grupo">' + L.map(function (x) {
+    var w = tot > 0 ? x.v / tot * 100 : 0;
+    return '<div class="gseg hit" style="width:' + w.toFixed(3) + '%;background:' + col(x) + '" data-tip="' + esc(x.n + ' · ' + M(x.v) + ' · ' + pz(x.q) + ' pzs · ' + pc(x.v, tot)) + '">' + (w >= 9 ? '<b>' + esc(x.n) + '</b><span class="num">' + pc(x.v, tot) + '</span>' : '') + '</div>';
+  }).join('') + '</div>';
+  var cards = L.map(function (x) {
+    var rows = x.det.map(function (d) {
+      var erp = d.fuente === 'ERP', w = x.v > 0 ? d.v / x.v * 100 : 0;
+      return '<div class="gr"><div class="gt"><div class="g1">' + esc(erp ? d.nombre : d.razon) + '</div><div class="g2"><span class="tag ' + (erp ? 'e' : 'p') + '">' + (erp ? 'ERP' : 'Plataformas') + '</span>' + esc(erp ? d.tienda : d.nombre) + '</div></div>' +
+        '<div class="gm"><div class="gvv num">' + mm(d.v) + '</div><div class="gq num">' + pz(d.q) + ' pzs · ' + pc(d.v, ref) + '</div></div><div class="gb"><i style="width:' + Math.max(w, 0.6).toFixed(2) + '%"></i></div></div>';
+    }).join('');
+    return '<div class="gc" style="--c:' + col(x) + '"><div class="gh"><div><div class="gn"><i class="dot" style="background:' + col(x) + '"></i>' + esc(x.n) + '</div><div class="gv2 num" title="' + full(x.v) + '">' + M(x.v) + '</div><div class="gs num">' + pz(x.q) + ' pzs</div></div><div class="gp num">' + pc(x.v, ref) + '</div></div><div class="gl">' + rows + '</div></div>';
+  }).join('');
+  var ctx = (S.chs.length ? chText() : 'inventario total') + (S.c >= 0 ? ' · ' + catName(S.c) : '');
+  return section(4, 'Concentración por razón social', 'valor a costo de ' + esc(ctx) + ' por grupo · razón social y tienda (Plataformas) o almacén (ERP)',
+    L.length ? '<div class="gv">' + strip + '<div class="gcards">' + cards + '</div><div class="gtot"><span>Total</span><b class="num">' + M(tot) + '</b><span class="num">' + pz(tq) + ' pzs · ' + pc(tot, ref) + ' del total</span></div></div>' : '<div class="empty">Sin inventario para los filtros actuales.</div>');
+}
+
+/* ---------- conciliación y validaciones ---------- */
+function conciliacion(m) {
+  var rows = m.V.rec.map(function (r) {
+    var chip = r.exacta ? '<span class="chip ok">Conciliado</span>' : r.ok ? '<span class="chip rd">Conciliado · redondeo de centavos</span>' : '<span class="chip er">Con diferencia</span>';
+    return '<div class="tr"><div><b>' + esc(r.n) + '</b></div><div class="r num">' + full(r.ref) + '</div><div class="r num">' + full(r.sum) + '</div><div class="r num ' + (r.ok ? '' : 'dn') + '">' + (r.dif < 0 ? '−' : '') + full(Math.abs(r.dif)) + '</div><div>' + chip + '</div></div>';
+  }).join('');
+  var hint = m.V.rec.some(function (r) { return !r.ok; }) ? '<div class="sub">Hay diferencias de $1.00 o más: revisa que no falten registros, haya duplicados, costos ausentes o problemas de clasificación.</div>' : '<div class="sub">«Conciliado · redondeo» significa una diferencia menor a $1.00 que viene del redondeo a centavos de los concentrados; se muestra el importe real, no se fuerza a cero.</div>';
+  return section(7, 'Conciliación del inventario', 'valor total de referencia − suma del desglose = diferencia · sigue la selección activa',
+    table('minmax(220px,2fr) minmax(0,1.2fr) minmax(0,1.2fr) minmax(0,1fr) minmax(190px,1.4fr)', ['<div>Nivel</div>', '<div class="r">Valor de referencia</div>', '<div class="r">− Suma del desglose</div>', '<div class="r">= Diferencia</div>', '<div>Estado</div>'], rows, 760) + hint);
+}
+/* ---------- ficha del SKU ---------- */
+function fv(n) { return n >= 1e6 ? M(n) : full(n); }
+function drawerMov() {
+  var Fm = {}; if (S.chs.length) Fm.ch = S.chs; if (S.c >= 0) Fm.c = S.c;
+  var X = E.movSku(S.ficha, S.ds, Fm, U()), none = X.mov === 0, T = X.tot, ncut = X.nCortes, per = perLabel(), cp = X.cuts.filter(function (c) { return c.di === X.pico; })[0];
+  function card(t, v, s, big) { return '<div class="fld' + (big ? ' big' : '') + '"><div class="t">' + t + '</div><div class="v num">' + v + '</div>' + (s ? '<div class="sub num">' + s + '</div>' : '') + '</div>'; }
+  var cards = '<div class="grid2">' +
+    card('Existencia al corte', pz(X.q) + ' pzs', 'corte ' + dl(S.d), true) + card('Valor del inventario', '<span title="' + full(X.v) + '">' + fv(X.v) + '</span>', X.q ? full(X.v / X.q) + ' por pieza' : '', true) +
+    card('Entró', '<span class="ent">' + fv(T.ve) + '</span>', pz(T.e) + ' pzs') + card('Salió', fv(T.vs), pz(T.s) + ' pzs') +
+    card('Neto del periodo', smc(T.ve - T.vs), sgn(T.e - T.s) + ' pzs') + card('Último movimiento', X.ult == null ? 'Ninguno' : dl(X.ult), X.ult == null ? 'sin entradas ni salidas' : (X.diasSin === 0 ? 'en este corte' : 'hace ' + dias(X.diasSin))) + '</div>';
+  var nota = none
+    ? '<div class="warnbox"><div class="wic" aria-hidden="true">!</div><div class="wtx"><div class="wh">Sin movimientos en ' + dias(X.diasSin) + '</div><div class="sub">En ' + per + ' no tuvo ni una entrada ni una salida: la existencia fue la misma en los ' + ncut + ' cortes comparados.</div></div></div>'
+    : '<div class="story"><div class="lead">Se movieron <b>' + fv(X.mov) + '</b> en este SKU en ' + per + '. El mayor movimiento fue en el corte del <b>' + dl(X.pico) + '</b>' + (cp ? ': entraron ' + pz(cp.e) + ' y salieron ' + pz(cp.s) + ' piezas' : '') + '.</div></div>';
+  var crow = X.cuts.slice().reverse().map(function (c) {
+    var first = c.di === 0, pk = c.di === X.pico;
+    return '<div class="tr' + (pk ? ' pk' : '') + '"><div><b>' + dd(c.di) + '</b>' + (pk ? ' <span class="tag p">mayor</span>' : '') + '</div><div class="sub">' + (first ? 'inicial' : dias(c.dias)) + '</div><div class="r num">' + pz(c.q) + '</div><div class="r num ent">' + (first || !c.e ? '—' : '+' + pz(c.e) + ' · ' + M(c.ve)) + '</div><div class="r num">' + (first || !c.s ? '—' : '−' + pz(c.s) + ' · ' + M(c.vs)) + '</div><div class="r num ' + (c.e - c.s > 0 ? 'up' : c.e - c.s < 0 ? 'dn' : '') + '">' + (first ? '—' : sgn(c.e - c.s)) + '</div></div>';
+  }).join('');
+  var lrow = X.lugares.map(function (x) {
+    return '<div class="tr"><div class="ell"><span class="tag ' + (x.fuente === 'ERP' ? 'e' : 'p') + '">' + x.fuente + '</span> <b>' + esc(x.ch) + '</b> <span class="sub">· ' + esc(x.t) + '</span></div><div class="ell">' + esc(x.u) + '</div><div class="r num ent">' + (x.e ? '+' + pz(x.e) : '—') + '</div><div class="r num">' + (x.s ? '−' + pz(x.s) : '—') + '</div><div class="r num">' + mm(x.ve + x.vs) + '</div></div>';
+  }).join('');
+  var hrow = X.hoy.map(function (x) {
+    return '<div class="tr"><div class="ell"><span class="tag ' + (x.fuente === 'ERP' ? 'e' : 'p') + '">' + x.fuente + '</span> <b>' + esc(x.ch) + '</b> <span class="sub">· ' + esc(x.t) + '</span></div><div class="ell">' + esc(x.u) + '</div><div class="r num">' + pz(x.q) + '</div><div class="r num">' + full(x.v) + '</div></div>';
+  }).join('');
+  return '<div class="veil" data-a="closef"></div><aside class="drawer wide" role="dialog" aria-label="Movimientos del SKU"><div class="hd"><div><div style="opacity:.75;font-size:12px">Movimientos del SKU · ' + per + ' · ' + esc(X.cat) + '</div><h2 style="font-size:20px">' + esc(X.sku) + '</h2><div style="opacity:.9">' + esc(X.tit || 'Sin nombre en el concentrado') + '</div></div><button class="tbtn" data-a="closef">Cerrar ✕</button></div><div class="bd">' +
+    cards + nota + '<div><h3 class="h3">Corte por corte</h3>' +
+    table('minmax(90px,1fr) minmax(70px,.8fr) minmax(0,.9fr) minmax(0,1.5fr) minmax(0,1.5fr) minmax(0,.8fr)', ['<div>Corte</div>', '<div>Periodo</div>', '<div class="r">Existencia</div>', '<div class="r">Entró</div>', '<div class="r">Salió</div>', '<div class="r">Neto pzs</div>'], crow, 640) + '</div>' +
+    (lrow ? '<div><h3 class="h3">Dónde se movió</h3>' + table('minmax(220px,2.2fr) minmax(110px,1fr) minmax(0,.7fr) minmax(0,.7fr) minmax(0,.9fr)', ['<div>Almacén / canal · tienda</div>', '<div>Ubicación / estatus</div>', '<div class="r">Entró pzs</div>', '<div class="r">Salió pzs</div>', '<div class="r">Valor movido</div>'], lrow, 640) + '</div>' : '') +
+    '<div><h3 class="h3">Dónde está hoy</h3>' + (hrow ? table('minmax(220px,2.2fr) minmax(110px,1fr) minmax(0,.7fr) minmax(0,.9fr)', ['<div>Almacén / canal · tienda</div>', '<div>Ubicación / estatus</div>', '<div class="r">Piezas</div>', '<div class="r">Valor</div>'], hrow, 560) : '<div class="empty">Sin existencia en este corte.</div>') + '</div></div></aside>';
+}
+function drawer() {
+  if (S.ficha == null) return '';
+  if (S.view === 'mov') return drawerMov();
+  var f = E.ficha(S.d, S.ficha), ref = E.valor(S.d, {}, U()).ref.v, cat = f.rows.length ? f.rows[0].c : '', vn = f.venta;
+  var canales = {}; f.rows.forEach(function (r) { canales[r.ch] = 1; });
+  function card(t, v, s, big) { return '<div class="fld' + (big ? ' big' : '') + '"><div class="t">' + t + '</div><div class="v num">' + v + '</div>' + (s ? '<div class="sub">' + s + '</div>' : '') + '</div>'; }
+  var cards = '<div class="grid2">' +
+    card('Total en inventario', pz(f.q) + ' pzs', '', true) +
+    card('Valor del inventario', '<span title="' + full(f.v) + '">' + fv(f.v) + '</span>', '', true) +
+    card('Costo unitario promedio', f.q ? full(f.v / f.q) : '—', '') +
+    card('% del total general', pc(f.v, ref), '') +
+    card('Categoría', esc(cat), '') +
+    card('Almacén / canal', esc(Object.keys(canales).join(', ') || '—'), '') + '</div>';
+  /* tarjeta verde: lo que está para la venta = disponible del ERP + aptas de Plataformas, línea por línea */
+  var vrows = f.dispRows.map(function (r) { return '<div class="tr"><div>ERP disponible</div><div class="ell">' + esc(r.t) + '</div><div class="ell">' + esc(r.ch) + '</div><div class="r num">' + pz(r.q) + '</div><div class="r num">' + full(r.v) + '</div></div>'; }).join('') +
+    f.rows.filter(function (r) { return r.aptas; }).map(function (r) { return '<div class="tr"><div>Plataformas</div><div class="ell">' + esc(r.t) + '</div><div class="ell">' + esc(r.ch) + '</div><div class="r num">' + pz(r.q) + '</div><div class="r num">' + full(r.v) + '</div></div>'; }).join('');
+  if (!vn.tieneD) vrows = f.rows.filter(function (r) { return r.aptas; }).map(function (r) { return '<div class="tr"><div>Plataformas</div><div class="ell">' + esc(r.t) + '</div><div class="ell">' + esc(r.ch) + '</div><div class="r num">' + pz(r.q) + '</div><div class="r num">' + full(r.v) + '</div></div>'; }).join('');
+  var venta = '<div class="sale"><div class="sh2"><div><div class="lb">Para la venta</div><div class="v num">' + pz(vn.q) + ' pzs</div></div><div class="r"><div class="lb">Valor para la venta</div><div class="v2 num" title="' + full(vn.v) + '">' + fv(vn.v) + '</div></div></div>' +
+    (vrows ? table('minmax(100px,1fr) minmax(100px,1.1fr) minmax(100px,1.1fr) minmax(0,.6fr) minmax(0,.9fr)', ['<div>Fuente</div>', '<div>Tienda</div>', '<div>Almacén / canal</div>', '<div class="r">Piezas</div>', '<div class="r">Valor</div>'], vrows, 440) : '<div class="empty">Sin piezas para la venta en este corte.</div>') + '</div>';
+  var rows = f.rows.map(function (r) { return '<div class="tr"><div class="ell">' + esc(r.fuente) + '</div><div class="ell">' + esc(r.ch) + '</div><div class="ell">' + esc(r.t) + '</div><div class="ell">' + esc(r.u) + '</div><div class="r num">' + pz(r.q) + '</div><div class="r num">' + full(r.cu) + '</div><div class="r num">' + full(r.v) + '</div></div>'; }).join('');
+  return '<div class="veil" data-a="closef"></div><aside class="drawer" role="dialog" aria-label="Ficha del SKU"><div class="hd"><div><div style="opacity:.75;font-size:12px">Ficha del SKU · corte ' + dl(S.d) + '</div><h2 style="font-size:20px">' + esc(f.sku) + '</h2><div style="opacity:.9">' + esc(f.tit || 'Sin nombre en el concentrado') + '</div></div><button class="tbtn" data-a="closef">Cerrar ✕</button></div><div class="bd">' +
+    cards + venta + '<div><h3 class="h3">Desglose del inventario</h3>' +
+    table('minmax(80px,.9fr) minmax(90px,1fr) minmax(90px,1fr) minmax(90px,1fr) minmax(0,.6fr) minmax(0,.8fr) minmax(0,.9fr)', ['<div>Fuente</div>', '<div>Almacén / canal</div>', '<div>Tienda</div>', '<div>Ubicación / estatus</div>', '<div class="r">Cantidad</div>', '<div class="r">Costo unit.</div>', '<div class="r">Valor</div>'], rows || '<div class="empty">Sin existencia en este corte.</div>', 620) + '</div></div></aside>';
+}
+
+/* ---------- pestaña: movimientos y advertencias ---------- */
+function sm(n) { return (n > 0 ? '+' : n < 0 ? '−' : '') + M(Math.abs(n)); }
+function smc(n) { return '<span class="num ' + (n > 0 ? 'up' : n < 0 ? 'dn' : '') + '">' + sm(n) + '</span>'; }
+function dd(i) { return dl(i).slice(0, 5); }
+function dias(n) { return n + (n === 1 ? ' día' : ' días'); }
+function movChart(cuts, peakDi) {
+  var W = 1000, H = 310, L = 78, R = 20, T = 30, B = 48, n = cuts.length, mx = 0, k;
+  cuts.forEach(function (c) { mx = Math.max(mx, c.ve, c.vs); }); if (!mx) mx = 1;
+  var mid = T + (H - T - B) / 2, half = (H - T - B) / 2 - 16, slot = (W - L - R) / n, bw = Math.min(70, slot * 0.5);
+  function Yu(v) { return mid - v / mx * half; } function Yd(v) { return mid + v / mx * half; }
+  var g = '', bars = '', lab = '', hit = '';
+  [1, 0.5].forEach(function (f) {
+    g += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Yu(mx * f) + '" y2="' + Yu(mx * f) + '" stroke="#E6E6E6"/><text x="' + (L - 8) + '" y="' + (Yu(mx * f) + 4) + '" text-anchor="end" font-size="11" fill="#E83900">' + M(mx * f) + '</text>' +
+      '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Yd(mx * f) + '" y2="' + Yd(mx * f) + '" stroke="#E6E6E6"/><text x="' + (L - 8) + '" y="' + (Yd(mx * f) + 4) + '" text-anchor="end" font-size="11" fill="#111">−' + M(mx * f) + '</text>';
+  });
+  g += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + mid + '" y2="' + mid + '" stroke="#999" stroke-width="1.5"/><text x="' + (L - 8) + '" y="' + (mid + 4) + '" text-anchor="end" font-size="11" fill="#666">0</text>';
+  for (k = 0; k < n; k++) {
+    var c = cuts[k], x = L + slot * (k + 0.5), pk = c.di === peakDi;
+    bars += '<rect x="' + (x - bw / 2) + '" y="' + Yu(c.ve) + '" width="' + bw + '" height="' + Math.max(1, mid - Yu(c.ve)) + '" rx="4" fill="#FF541C" opacity="' + (pk ? 1 : 0.5) + '"/>' +
+      '<rect x="' + (x - bw / 2) + '" y="' + mid + '" width="' + bw + '" height="' + Math.max(1, Yd(c.vs) - mid) + '" rx="4" fill="#111" opacity="' + (pk ? 1 : 0.55) + '"/>' +
+      '<text x="' + x + '" y="' + (Yu(c.ve) - 6) + '" text-anchor="middle" font-size="11" font-weight="' + (pk ? 700 : 500) + '" fill="#E83900">' + M(c.ve) + '</text>' +
+      '<text x="' + x + '" y="' + (Yd(c.vs) + 14) + '" text-anchor="middle" font-size="11" font-weight="' + (pk ? 700 : 500) + '" fill="#111">−' + M(c.vs) + '</text>' +
+      '<text x="' + x + '" y="' + (H - 24) + '" text-anchor="middle" font-size="12" font-weight="' + (pk ? 700 : 500) + '" fill="' + (pk ? '#E83900' : '#333') + '">' + dd(c.di) + '</text>' +
+      '<text x="' + x + '" y="' + (H - 9) + '" text-anchor="middle" font-size="10.5" fill="#666">' + dias(c.dias) + '</text>';
+    if (pk) bars += '<rect x="' + (x - 62) + '" y="4" width="124" height="20" rx="10" fill="#FF541C"/><text x="' + x + '" y="18" text-anchor="middle" font-size="11" font-weight="600" fill="#fff">Mayor movimiento</text>';
+    hit += '<rect class="hit" x="' + (x - slot / 2) + '" y="0" width="' + slot + '" height="' + H + '" fill="transparent" data-tip="' + esc(dl(c.di) + ' (' + dias(c.dias) + ' desde ' + dl(c.prev) + ') · Entró ' + M(c.ve) + ' · ' + pz(c.e) + ' pzs · Salió ' + M(c.vs) + ' · ' + pz(c.s) + ' pzs · ' + pz(c.nSku) + ' SKU') + '"/>';
+  }
+  return '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Entradas y salidas por corte">' + g + bars + hit + '</svg>';
+}
+function spark(vals, pk) {
+  var W = 200, H = 40, n = vals.length, mx = Math.max.apply(null, vals) || 1, bw = W / n, s = '';
+  vals.forEach(function (v, i) { var h = Math.max(1.5, v / mx * (H - 4)); s += '<rect x="' + (i * bw + 2) + '" y="' + (H - h) + '" width="' + (bw - 4) + '" height="' + h + '" rx="2" fill="' + (i === pk ? '#FF541C' : '#D9D9D9') + '"/>'; });
+  return '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="40" preserveAspectRatio="none" aria-hidden="true">' + s + '</svg>';
+}
+function movFlow(list, nameKey) {
+  var rows = list.slice(0, 8).map(function (x) {
+    return '<div class="tr"><div class="ell"><span class="tag ' + (x.src === 0 ? 'e' : 'p') + '">' + (x.src === 0 ? 'ERP' : 'Plataformas') + '</span> <b>' + esc(x[nameKey]) + '</b>' + (x.tienda ? ' <span class="sub">· ' + esc(x.tienda) + '</span>' : '') + '</div><div class="r num ent">' + mm(x.ve) + '</div><div class="r num">' + mm(x.vs) + '</div><div class="r">' + smc(x.ve - x.vs) + '</div></div>';
+  }).join('');
+  return table('minmax(300px,3.4fr) minmax(0,.9fr) minmax(0,.9fr) minmax(0,.9fr)', ['<div>' + (nameKey === 'name' && list.length && list[0].u == null ? 'Almacén / canal · tienda' : 'Ubicación / estatus') + '</div>', '<div class="r">Entró</div>', '<div class="r">Salió</div>', '<div class="r">Neto</div>'], rows, 640) + (list.length > 8 ? '<div class="sub" style="margin-top:6px">… y ' + (list.length - 8) + ' más, de menor movimiento</div>' : '');
+}
+function movView(m) {
+  var Fm = {}; if (S.chs.length) Fm.ch = S.chs; if (S.c >= 0) Fm.c = S.c;
+  var MV = E.movimientos(S.ds, Fm, U()), SM = E.sinMov(S.ds, Fm, U());
+  if (!MV.ok) return '<div class="wrap">' + section(1, 'Movimientos y advertencias', '', '<div class="empty">Los cortes elegidos (' + perLabel() + ') no tienen un corte anterior contra el cual medir movimientos. Agrega un corte posterior en «Fecha de corte».</div>') + '</div>';
+  var T0 = MV.tot, mov = T0.ve + T0.vs, neto = T0.ve - T0.vs, pk = MV.peak, per = perLabel();
+  var ctx = [S.fu >= 0 ? (S.fu === 0 ? 'ERP' : 'Plataformas') : '', S.ts.length ? S.ts.map(function (x) { return D.dims.t[x]; }).join(' + ') : '', S.chs.length ? chText() : '', S.c >= 0 ? catName(S.c) : ''].filter(Boolean).join(' · ');
+  function k(t, v, s, cls) { return '<div class="card kpi' + (cls ? ' ' + cls : '') + '"><div class="t">' + t + '</div><div class="v num">' + v + '</div><div class="s num">' + s + '</div></div>'; }
+  var s1 = section(1, 'Resumen del movimiento', 'periodo ' + per + ' · ' + dias(MV.dias) + ' · ' + MV.cuts.length + ' cortes comparados' + (ctx ? ' · ' + esc(ctx) : ''),
+    '<div class="kpis">' +
+    k('Valor movido', '<span title="' + full(mov) + '">' + M(mov) + '</span>', 'entradas + salidas · neto ' + smc(neto), 'main') +
+    k('Entradas', '<span class="ent" title="' + full(T0.ve) + '">' + M(T0.ve) + '</span>', pz(T0.e) + ' piezas') +
+    k('Salidas', '<span title="' + full(T0.vs) + '">' + M(T0.vs) + '</span>', pz(T0.s) + ' piezas') +
+    k('SKU con movimiento', pz(MV.nSku), 'SKU distintos con al menos una entrada o salida') + '</div>');
+  var s2 = section(2, 'Entradas y salidas por corte', 'valor a costo · el movimiento de cada corte es el cambio frente al corte anterior (por eso se indican los días)',
+    '<div class="legend"><span><i class="lg" style="width:14px;height:12px;border-radius:3px;background:#FF541C"></i>Entradas (suben las existencias)</span><span><i class="lg" style="width:14px;height:12px;border-radius:3px;background:#111"></i>Salidas (bajan las existencias)</span></div>' + movChart(MV.cuts, pk ? pk.di : -1));
+  var s3 = '';
+  if (pk) {
+    var top1 = pk.ch[0], topU = pk.u[0], mE = pk.ch.slice().sort(function (a, b) { return b.ve - a.ve; })[0], mS = pk.ch.slice().sort(function (a, b) { return b.vs - a.vs; })[0];
+    var story = '<div class="story"><div class="lead">El <b>' + dl(pk.di) + '</b> fue el corte con más movimiento: en ' + dias(pk.dias) + ' (desde el corte del ' + dl(pk.prev) + ') se movieron <b>' + M(pk.mov) + '</b> en <b>' + pz(pk.nSku) + ' SKU</b>.</div><ul>' +
+      '<li><b>Entró:</b> ' + M(pk.ve) + ' (' + pz(pk.e) + ' pzs). Mayor entrada: ' + esc(mE.fuente + ' · ' + mE.name + ' · ' + mE.tienda) + ', ' + M(mE.ve) + '.</li>' +
+      '<li><b>Salió:</b> ' + M(pk.vs) + ' (' + pz(pk.s) + ' pzs). Mayor salida: ' + esc(mS.fuente + ' · ' + mS.name + ' · ' + mS.tienda) + ', ' + M(mS.vs) + '.</li>' +
+      '<li><b>Neto:</b> ' + smc(pk.ve - pk.vs) + ' (' + sgn(pk.e - pk.s) + ' pzs) · ' + (pk.ve >= pk.vs ? 'entró más de lo que salió.' : 'salió más de lo que entró.') + '</li>' +
+      '</ul></div>';
+    s3 = section(3, 'Corte con más movimiento · ' + dl(pk.di), 'qué pasó en el corte que más movió el inventario', story);
+  }
+  var cards4 = MV.top4.map(function (s, i) {
+    return '<div class="tk click" data-a="sku" data-v="' + s.k + '" title="Clic para ver la ficha del SKU"><div class="tkh"><span class="rk">#' + (i + 1) + '</span><span class="chip in">' + esc(s.cat) + '</span></div>' +
+      '<div class="tkn">' + esc(s.sku) + '</div><div class="tkt">' + esc(s.tit) + '</div>' +
+      '<div class="tkv num" title="' + full(s.mov) + '">' + M(s.mov) + '</div><div class="sub">valor movido · ' + pz(s.movQ) + ' pzs</div>' +
+      '<div class="tkio"><div><div class="lb2">Entró</div><div class="num ent"><b>' + M(s.ve) + '</b></div><div class="sub num">' + pz(s.e) + ' pzs</div></div><div><div class="lb2">Salió</div><div class="num"><b>' + M(s.vs) + '</b></div><div class="sub num">' + pz(s.s) + ' pzs</div></div><div><div class="lb2">Neto</div><div>' + smc(s.neto) + '</div><div class="sub num">' + sgn(s.netoQ) + ' pzs</div></div></div>' +
+      spark(s.cut, s.pico - 1) + '<div class="sub">Mayor movimiento: corte ' + dd(s.pico) + (s.lugar ? ' · lugar principal: ' + esc(s.lugar) : '') + '</div></div>';
+  }).join('');
+  var s4 = section(4, 'Top 4 SKU con más movimiento', 'por valor movido (entradas + salidas) en ' + per + ' · las barras muestran el movimiento de cada corte',
+    cards4 ? '<div class="top4">' + cards4 + '</div>' : '<div class="empty">Sin movimientos para los filtros actuales.</div>');
+
+  /* advertencia: inventario sin ningún movimiento */
+  var Z = SM.tot, pctV = SM.totV ? Z.v / SM.totV * 100 : 0;
+  var qs = S.sq.trim().toLowerCase(), list = qs ? SM.skus.filter(function (x) { return (x.sku + ' ' + x.tit).toLowerCase().indexOf(qs) >= 0; }) : SM.skus;
+  var drows = list.slice(0, S.sp).map(function (x) {
+    return '<div class="tr click" data-a="sku" data-v="' + x.k + '" title="Clic para ver el detalle del SKU"><div class="ell"><b>' + esc(x.sku) + '</b></div><div class="ell" title="' + esc(x.tit) + '">' + esc(x.tit) + '</div><div class="r num">' + pz(x.q) + '</div><div class="r num">' + full(x.cu) + '</div><div class="r num">' + mm(x.v) + '</div><div class="r num sub">' + pc(x.v, Z.v) + '</div></div>';
+  }).join('');
+  var warn = '<div class="warnbox"><div class="wic" aria-hidden="true">!</div><div class="wtx"><div class="wh"><b>' + pz(Z.n) + ' SKU</b> no se han movido para nada</div><div class="sub">En ' + per + ' (' + dias(SM.dias) + ', ' + MV.cuts.length + ' cortes comparados) no tuvieron ni una entrada ni una salida y siguen con existencia al corte ' + dl(S.d) + '.</div></div></div>' +
+    '<div class="kpis k3">' +
+    k('SKU sin movimiento', pz(Z.n), pc(Z.n, SM.nAll) + ' de los ' + pz(SM.nAll) + ' SKU con existencia', 'warnk') +
+    k('Valor inmovilizado', '<span title="' + full(Z.v) + '">' + M(Z.v) + '</span>', pc(Z.v, SM.totV) + ' del valor del inventario analizado', 'warnk') +
+    k('Piezas sin movimiento', pz(Z.q), pc(Z.q, SM.totQ) + ' de las piezas del inventario analizado', 'warnk') + '</div>' +
+    '<div class="sub">Inventario analizado: ERP + Plataformas sin «en camino», «en revisión» ni «extraviadas» (esos estatus no tienen movimiento medido) · ' + M(SM.totV) + ' · ' + pz(SM.totQ) + ' pzs.</div>' +
+    '<div><div class="dh"><h3 class="h3" style="margin:0">Detalle de SKU sin movimiento · de mayor a menor valor</h3><input class="search" data-a="sq" type="search" placeholder="Buscar SKU o descripción" value="' + esc(S.sq) + '" aria-label="Buscar SKU sin movimiento"></div>' +
+    (drows ? table('minmax(130px,1fr) minmax(220px,3fr) minmax(0,.7fr) minmax(0,.8fr) minmax(0,.9fr) minmax(0,.7fr)', ['<div>SKU</div>', '<div>Descripción</div>', '<div class="r">Piezas</div>', '<div class="r">Costo unit.</div>', '<div class="r">Valor</div>', '<div class="r">% del total</div>'], drows, 720) : '<div class="empty">Ningún SKU coincide con la búsqueda.</div>') +
+    (list.length > S.sp ? '<div style="text-align:center;margin-top:8px"><button class="btn" data-a="spmore">Ver más (' + pz(list.length - S.sp) + ' restantes)</button></div>' : '') + '</div>';
+  var s5 = section(5, 'Advertencia · inventario sin movimiento', 'SKU con existencia al corte ' + dl(S.d) + ' sin cambios en ' + per, warn, '');
+  return '<div class="wrap">' + s1 + s2 + s3 + s4 + s5 + '</div>';
+}
+
+function render() {
+  var m = model();
+  var fa = document.activeElement && document.activeElement.getAttribute && document.activeElement.getAttribute('data-a'), keepQ = fa === 'q' || fa === 'sq';
+  var pos = keepQ ? document.activeElement.selectionStart : 0;
+  app.innerHTML = topBar(m) + (S.view === 'mov' ? movView(m) : '<div class="wrap">' + nivel1(m) + tendencia(m) + nivel2(m) + nivelCia(m) + nivel3(m) + nivel4(m) + conciliacion(m) + '</div>') + drawer();
+  if (keepQ) { var i = app.querySelector('[data-a="' + fa + '"]'); if (i) { i.focus(); i.setSelectionRange(pos, pos); } }
+}
+
+/* ---------- eventos ---------- */
+function reset(keepScroll) { S.chs = []; S.c = -1; S.ficha = null; S.page = 100; S.alert = null; }
+app.addEventListener('click', function (ev) {
+  var t = ev.target.closest('[data-a]'); if (!t) return; var a = t.getAttribute('data-a'), v = t.getAttribute('data-v'), y = window.scrollY;
+  if (a === 'q' || a === 'sq' || a === 'fecha' || a === 'mschk') return;
+  if (a !== 'msopen' && a !== 'msall' && a !== 'mslast' && a !== 'msclear' && S.ms) S.ms = null;
+  if (a === 'msall') { S.ds = allDs(); setD(); S.ficha = null; S.page = 100; render(); return; }
+  if (a === 'mslast') { S.ds = [ND - 1]; setD(); S.ficha = null; S.page = 100; render(); return; }
+  if (a === 'view') { S.view = v; S.ficha = null; render(); window.scrollTo(0, 0); return; }
+  if (a === 'spmore') { S.sp += 50; render(); window.scrollTo(0, y); return; }
+  if (a === 'expall') { var pa = v.split('|'), L2 = pa[1] === 'alm' ? model().base.alm : model().base.can; L2.forEach(function (x) { S.exp[(pa[1] === 'alm' ? 0 : 1) + '|' + x.ch] = pa[0] === '1'; }); }
+  else if (a === 'msopen') { S.ms = S.ms === v ? null : v; }
+  else if (a === 'msclear') { if (v === 'fu') { S.fus = []; setFu(); } else if (v === 'ch') S.chs = []; else S.ts = []; S.c = -1; S.page = 100; }
+  else if (a === 'ch') { S.chs = S.chs.length === 1 && S.chs[0] === +v ? [] : [+v]; S.c = -1; S.ficha = null; S.page = 100; }
+  else if (a === 'cat') { S.c = +v === S.c ? -1 : +v; S.ficha = null; S.page = 100; }
+  else if (a === 'tab') { S.tab = v; }
+  else if (a === 'exp') { S.exp[v] = !S.exp[v]; }
+  else if (a === 'cats') { S.allCats = !S.allCats; }
+  else if (a === 'sku') { S.ficha = +v; }
+  else if (a === 'closef') { S.ficha = null; }
+  else if (a === 'sort') { if (S.sort === v) S.dir = -S.dir; else { S.sort = v; S.dir = (v === 'sku' || v === 'tit' || v === 'cat' || v === 'loc') ? 1 : -1; } S.page = 100; }
+  else if (a === 'more') { S.page += 100; }
+  else if (a === 'alert') { S.alert = S.alert === v ? null : v; }
+  else if (a === 'reset') { reset(); S.q = ''; S.sort = 'v'; S.dir = -1; S.fus = []; S.fu = -1; S.ts = []; S.ms = null; S.ds = allDs(); setD(); }
+  else if (a === 'back') { if (S.ficha != null) S.ficha = null; else if (S.c >= 0) S.c = -1; else if (S.chs.length) S.chs = []; S.page = 100; }
+  else if (a === 'go') { var lv = +v; if (lv < 1) { S.chs = []; S.c = -1; } else if (lv < 2) { S.c = -1; } S.ficha = null; S.page = 100; }
+  else return;
+  render(); if (a !== 'go' && a !== 'reset' && a !== 'back') window.scrollTo(0, y);
+});
+var tipEl = document.createElement('div'); tipEl.className = 'tipf'; document.body.appendChild(tipEl);
+app.addEventListener('mousemove', function (ev) { var h = ev.target.closest && ev.target.closest('.hit'); if (!h) { tipEl.style.display = 'none'; return; } tipEl.textContent = h.getAttribute('data-tip'); tipEl.style.display = 'block'; tipEl.style.left = Math.min(ev.clientX + 14, window.innerWidth - 300) + 'px'; tipEl.style.top = (ev.clientY + 14) + 'px'; });
+app.addEventListener('mouseleave', function () { tipEl.style.display = 'none'; });
+app.addEventListener('input', function (ev) { var t = ev.target.closest('[data-a="q"],[data-a="sq"]'); if (!t) return; if (t.getAttribute('data-a') === 'sq') { S.sq = t.value; S.sp = 50; } else { S.q = t.value; S.page = 100; } render(); });
+app.addEventListener('change', function (ev) {
+  var t = ev.target.closest('[data-a]'); if (!t) return; var a = t.getAttribute('data-a'), v = +t.value;
+  if (a === 'mschk') {
+    var k = t.getAttribute('data-k'), id = +t.value, arr = k === 'fu' ? S.fus : k === 'ch' ? S.chs : k === 'd' ? S.ds : S.ts, i = arr.indexOf(id);
+    if (t.checked && i < 0) arr.push(id); else if (!t.checked && i >= 0) arr.splice(i, 1);
+    if (k === 'd') { if (!S.ds.length) S.ds.push(id); setD(); }
+    if (k === 'fu') { setFu(); S.chs = S.chs.filter(function (c) { return S.fu < 0 || srcOfCh(c, E.valor(S.d, {}, {})) === S.fu; }); var okT = E.tiendas(S.d, S.fu).map(function (x) { return x.t; }); S.ts = S.ts.filter(function (x) { return okT.indexOf(x) >= 0; }); }
+    S.ficha = null; S.c = -1;
+  }
+  else return;
+  S.page = 100; render();
+});
+document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') { if (S.ms) { S.ms = null; render(); } else if (S.ficha != null) { S.ficha = null; render(); } } });
+document.addEventListener('click', function (ev) { if (S.ms && !ev.target.closest('.ms')) { var y0 = window.scrollY; S.ms = null; render(); window.scrollTo(0, y0); } });
+
+/* enlace directo opcional: ?corte=n&ch=Nombre&cat=Nombre&sku=CODIGO */
+(function () {
+  var p = new URLSearchParams(location.search), m;
+  if (p.get('corte') != null && +p.get('corte') >= 0 && +p.get('corte') < ND) { S.ds = [+p.get('corte')]; setD(); }
+  if (p.get('cortes')) { var cs = p.get('cortes').split(',').map(Number).filter(function (x) { return x >= 0 && x < ND; }); if (cs.length) { S.ds = cs; setD(); } }
+  if (p.get('ch')) { var b = E.valor(S.d, {}); p.get('ch').split(',').forEach(function (n) { var i = D.dims.ch.indexOf(n.trim()); if (i >= 0) { S.chs.push(i); S.tab = srcOfCh(i, b) === 0 ? 'alm' : 'can'; } }); }
+  if (p.get('cat')) { var c = D.dims.c.indexOf(p.get('cat')); if (c >= 0) S.c = c; }
+  if (p.get('sku')) { var k = D.skus.indexOf(p.get('sku')); if (k >= 0) S.ficha = k; }
+  if (p.get('q')) S.q = p.get('q');
+  if (p.get('vista') === 'mov') S.view = 'mov';
+  if (p.get('abrir')) p.get('abrir').split(',').forEach(function (n) { var i = D.dims.ch.indexOf(n.trim()); if (i >= 0) S.exp[(E.valor(S.d, {}).alm.some(function (x) { return x.ch === i; }) ? 0 : 1) + '|' + i] = true; });
+  if (p.get('fuente')) { p.get('fuente').split(',').forEach(function (f) { if (f === 'erp') S.fus.push(0); else if (f === 'plat') S.fus.push(1); }); setFu(); }
+  if (p.get('tienda')) p.get('tienda').split(',').forEach(function (n) { var ti = D.dims.t.indexOf(n.trim()); if (ti >= 0) S.ts.push(ti); });
+})();
+render();
+})();
+</script>
+</body>
+</html>

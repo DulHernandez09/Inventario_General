@@ -34,6 +34,16 @@ ROOT = Path(__file__).resolve().parents[1]
 EN_CAMINO = ["Pendientes de ingreso", "En transferencia", "Devueltas por el comprador"]
 PROCESO_INTERNO = ["Extraviadas (en búsqueda)", "En revisión"]
 EXCLUIR_ESTATUS = EN_CAMINO + PROCESO_INTERNO
+FUENTE_FUERA = "PLATAFORMAS · Fuera del inventario"
+RAZONES = {}   # "PLATAFORMA|TIENDA" -> razón social (se llena al cargar el concentrado)
+TIENDA_AMAZON_MEDICAL = "SELECTSHOP (MEDICAL)"   # Amazon · Medical Store (razón social Selectshop MB)
+# Compañías (guía: Excel "Resumen Inventario 23-10-2026"): ERP se asigna por almacén y Plataformas por tienda
+# (cada tienda de Plataformas pertenece a una sola compañía). Lo que no esté aquí se muestra como "Sin compañía".
+CIA_ALMACEN = {"TEPOTZOTLAN 2": "Select Shop", "TEPOTZOTLAN 4": "Select Shop", "IZTAPALAPA": "Select Shop", "NAUCALPAN": "Select Shop",
+               "TEPOTZOTLAN 3": "Bloom & Blush", "TEPOTZOTLAN 3 - MR": "Bloom & Blush"}   # 3 - MR = Miss Rou (Creativa Digital)
+CIA_TIENDA_PLAT = {"SELECTSHOP": "Select Shop", "MEDICAL STORE": "Select Shop", "SIGNA": "Select Shop", "T-LAB": "Select Shop",
+                   "NEXU STORE": "Bloom & Blush", "OCENID": "Bloom & Blush", "ARMAF": "Bloom & Blush",
+                   "MISS ROU": "Bloom & Blush", TIENDA_AMAZON_MEDICAL: "Select Shop"}   # Creativa Digital → Bloom & Blush (según el mapa de integración intercompañías)
 
 
 def norm_cat(s):
@@ -94,12 +104,24 @@ def cargar_disponible(path):
 def cargar(plat_path, erp_path):
     p = pd.read_excel(plat_path)
     e = pd.read_excel(erp_path)
+    # razón social de cada combinación plataforma · tienda (la más grande por piezas si hubiera más de una); alimenta la vista "Por compañía"
+    rz = pd.DataFrame({"c": p["Plataforma"].astype(str).str.strip(), "t": p["Tienda"].astype(str).str.strip(),
+                       "r": p["Razón social"].astype(str).str.strip().replace({"nan": "Sin razón social", "": "Sin razón social"}), "q": p["Total"]})
+    rz.loc[(rz.c.str.upper() == "AMAZON") & (rz.t.str.upper() == "MEDICAL STORE"), "t"] = TIENDA_AMAZON_MEDICAL
+    m = rz.groupby(["c", "t", "r"]).q.sum().reset_index().sort_values("q", ascending=False)
+    RAZONES.clear(); RAZONES.update({f"{r.c}|{r.t}": r.r for r in m.drop_duplicates(["c", "t"]).itertuples()})
+    varias = m.groupby(["c", "t"]).r.nunique(); varias = varias[varias > 1]
+    if len(varias):
+        print("Aviso: combinaciones plataforma·tienda con más de una razón social (se usa la de más piezas):", [f"{a}|{b}" for a, b in varias.index])
     p = pd.DataFrame({
         "f": p["Fecha"], "src": "PLATAFORMAS", "ch": p["Plataforma"].str.strip(), "t": p["Tienda"].str.strip(),
         "c": norm_cat(p["Categoría"]), "u": p["Ubicación"].str.strip(),
         "sku": p["SKU CORRECTO"].astype(str).str.strip(), "tit": p["Título"].astype(str),
         "q": p["Total"], "v": p["Costo Inventario"],
     })
+    # En Amazon la cuenta de Selectshop tiene dos tiendas; la de Medical se conserva con su nombre propio para identificar sus SKU,
+    # pero todo cuenta como Selectshop (Select Shop). Solo aplica a Amazon.
+    p.loc[(p["ch"].str.upper() == "AMAZON") & (p["t"].str.upper() == "MEDICAL STORE"), "t"] = TIENDA_AMAZON_MEDICAL
     e = pd.DataFrame({
         "f": e["Fecha"], "src": "ERP", "ch": e["Almacen"].str.strip(), "t": e["Tienda"].str.strip(),
         "c": norm_cat(e["Categoria"]),
@@ -161,7 +183,10 @@ def main(plat_path, erp_path, disp_path=None):
         excluido["por_estatus"][est] = porf
     if mask.any():
         print(f"Excluido del inventario ({', '.join(EXCLUIR_ESTATUS)}): {int(d[mask]['q'].sum()):,} pzs en {int(mask.sum()):,} filas (todos los cortes)")
-    d = d[~mask].copy()
+    # no cuentan en el inventario de los tableros, pero se conservan por SKU en una fuente aparte (la usa el tablero de concentración de valor,
+    # que cuenta todos los estatus de Plataformas); el resto de los tableros solo mira ERP y PLATAFORMAS
+    d = d.copy()
+    d.loc[mask, "src"] = FUENTE_FUERA
     g = d.groupby(K + ["f"]).agg(q=("q", "sum"), v=("v", "sum")).reset_index()
     fechas = sorted(g.f.unique())
     dates = [str(x)[:10] for x in fechas]
@@ -183,7 +208,7 @@ def main(plat_path, erp_path, disp_path=None):
 
     dims = {k: sorted(set(m[k]) | set(g[k])) for k in D}
     # Orden fijo de fuentes: ERP=0, PLATAFORMAS=1, luego Disponible / Reservado
-    extras = [x for x in ("ERP · Disponible", "ERP · Reservado", "ERP · Mermas", "ERP · Venta plataforma", "ERP · Venta Outlet") if x in dims["src"]]
+    extras = [x for x in ("ERP · Disponible", "ERP · Reservado", "ERP · Mermas", "ERP · Venta plataforma", "ERP · Venta Outlet", FUENTE_FUERA) if x in dims["src"]]
     dims["src"] = ["ERP", "PLATAFORMAS"] + extras
     ix = {k: {v: i for i, v in enumerate(dims[k])} for k in D}
     # Título por SKU: el primero válido (se ignoran #N/D, vacíos y "nan" que deja una búsqueda fallida en el Excel)
@@ -213,7 +238,7 @@ def main(plat_path, erp_path, disp_path=None):
         if qs.max() <= 0:
             continue
         inv.append([ix["src"][k[0]], ix["ch"][k[1]], ix["t"][k[2]], ix["c"][k[3]], ix["u"][k[4]], si[k[5]],
-                    round(float(uc[k]), 4)] + [int(x) for x in qs])
+                    round(float(uc[k]), 6)] + [int(x) for x in qs])
 
     # Categoría principal de cada SKU (para filtrar nuevos SKU y baja rotación)
     cat_sku = d.groupby(["sku", "c"]).q.size().reset_index().sort_values("q", ascending=False).drop_duplicates("sku")
@@ -224,6 +249,7 @@ def main(plat_path, erp_path, disp_path=None):
            "mv": mv, "st": st, "inv2": inv, "skc": skc,
            # clasificación de venta (definida aquí, en la capa de datos, no en la interfaz)
            "cfg": {"vendible_estatus_plataformas": ["Aptas para vender"],
+                   "companias": {"almacen": CIA_ALMACEN, "tienda_plataformas": CIA_TIENDA_PLAT}, "razones": dict(RAZONES),
                    # Plataformas: solo "aptas" y "no aptas" ocupan espacio y cuentan como inventario
                    "estatus_en_camino": EN_CAMINO, "estatus_ocupa_espacio": ["Aptas para vender", "No aptas para vender"],
                    "ubicaciones_fuera_de_disponible": {"mermas": UB_MERMAS, "venta_plataforma": UB_VENTA_PLATAFORMA, "outlet": UB_OUTLET},

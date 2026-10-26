@@ -16,8 +16,10 @@
   'use strict';
 
   function create(D) {
-    var ND = D.dates.length, iDisp = D.dims.src.indexOf('ERP · Disponible'), iRes = D.dims.src.indexOf('ERP · Reservado'), iMer = D.dims.src.indexOf('ERP · Mermas'), iVp = D.dims.src.indexOf('ERP · Venta plataforma'), iOut = D.dims.src.indexOf('ERP · Venta Outlet');
+    var ND = D.dates.length, iDisp = D.dims.src.indexOf('ERP · Disponible'), iRes = D.dims.src.indexOf('ERP · Reservado'), iMer = D.dims.src.indexOf('ERP · Mermas'), iVp = D.dims.src.indexOf('ERP · Venta plataforma'), iOut = D.dims.src.indexOf('ERP · Venta Outlet'), iFuera = D.dims.src.indexOf('PLATAFORMAS · Fuera del inventario');
     var cache = {}, skuRowsCache = {};
+    /* filtros de varias opciones: acepta un índice, una lista de índices, -1 o null (sin filtro) y devuelve un conjunto o null */
+    function setOf(v) { if (v == null || v === -1) return null; var a = Array.isArray(v) ? v : [v], o = {}; if (!a.length) return null; a.forEach(function (x) { o[x] = 1; }); return o; }
     D.low = D.skus.map(function (s, i) { return (s + ' ' + D.tit[i]).toLowerCase(); });
     var vendNames = (D.cfg && D.cfg.vendible_estatus_plataformas) || ['Aptas para vender'];
     var vendSet = {}; D.dims.u.forEach(function (n, i) { if (vendNames.indexOf(n) >= 0) vendSet[i] = 1; });
@@ -227,8 +229,268 @@
       return { b: b, tot: tot };
     }
 
+    /* ---------- Concentración de valor: total de referencia → almacén / canal → categoría → SKU ----------
+       Valor oficial = suma de st (concentrados). Valor por SKU = cantidad × costo unitario (inv2). Los dos se concilian, no se forzan.
+       Universo: ERP + Plataformas (aptas y no aptas), igual que el Resumen ejecutivo. Disponible/Reservado/Mermas son clasificaciones del mismo stock y no se suman. */
+    /* compañía de una fila: ERP por almacén, Plataformas por tienda (mapeo en cfg.companias, generado por scripts/generar_datos.py) */
+    function ciaOf(r) {
+      var C = (D.cfg && D.cfg.companias) || {};
+      return (r[0] === 0 ? (C.almacen || {})[D.dims.ch[r[1]]] : (C.tienda_plataformas || {})[D.dims.t[r[2]]]) || 'Sin compañía';
+    }
+    function valor(di, F, U) {
+      F = F || {}; U = U || {}; var fu = F.fuente == null ? -1 : F.fuente, fch = setOf(F.ch), fc = F.c == null ? -1 : F.c;
+      var uf = U.fuente == null ? -1 : U.fuente, ut = setOf(U.t), cias = {};
+      function inU(s) { return s <= 1 || s === iFuera; }          // universo: ERP + Plataformas con todos los estatus
+      function fte(s) { return s === iFuera ? 1 : s; }            // fuente: 0 = ERP, 1 = Plataformas
+      function uOk(s, tienda) { return (uf < 0 || fte(s) === uf) && (ut == null || ut[tienda]); }   // filtros globales: fuente y tienda
+      function selOk(s, ch) { return (fu < 0 || fte(s) === fu) && (fch == null || fch[ch]); }
+      var ref = { q: 0, v: 0 }, prev = di > 0 ? { q: 0, v: 0 } : null, alm = {}, can = {}, sel = { q: 0, v: 0 }, cats = {};
+      D.st.forEach(function (r) {
+        if (!inU(r[0]) || !uOk(r[0], r[2])) return;
+        if (r[5] === di) {
+          ref.q += r[6]; ref.v += r[7];
+          var g = (r[0] === 0 ? alm : can), x = g[r[1]] || (g[r[1]] = { ch: r[1], q: 0, v: 0 }); x.q += r[6]; x.v += r[7];
+          if (selOk(r[0], r[1])) { sel.q += r[6]; sel.v += r[7]; var c = cats[r[3]] || (cats[r[3]] = { c: r[3], q: 0, v: 0 }); c.q += r[6]; c.v += r[7]; }
+          if (selOk(r[0], r[1]) && (fc < 0 || r[3] === fc)) { var cn = ciaOf(r), cx = cias[cn] || (cias[cn] = { n: cn, q: 0, v: 0, det: {} }); cx.q += r[6]; cx.v += r[7];
+            var dn = r[0] === 0 ? D.dims.ch[r[1]] : D.dims.t[r[2]], rz = r[0] === 0 ? '' : (((D.cfg && D.cfg.razones) || {})[D.dims.ch[r[1]] + '|' + D.dims.t[r[2]]] || 'Sin razón social'), dk = (r[0] === 0 ? 0 : 1) + '|' + dn + '|' + (r[0] === 0 ? r[2] : rz), dx = cx.det[dk] || (cx.det[dk] = { fuente: r[0] === 0 ? 'ERP' : 'Plataformas', nombre: dn, tienda: r[0] === 0 ? D.dims.t[r[2]] : '', razon: rz, q: 0, v: 0 }); dx.q += r[6]; dx.v += r[7]; }
+        } else if (prev && r[5] === di - 1) { prev.q += r[6]; prev.v += r[7]; }
+      });
+      function rank(o) { var a = Object.keys(o).map(function (k) { return o[k]; }).filter(function (x) { return x.q || x.v; }).sort(function (a, b) { return b.v - a.v; }), cum = 0; a.forEach(function (x) { cum += x.v; x.cum = cum; }); return a; }
+      var almL = rank(alm), canL = rank(can), catL = rank(cats);
+      /* SKU: una fila por SKU y categoría dentro de la selección (y categoría elegida) */
+      var skuMap = {}, allSkuV = 0, allSkuQ = 0, nSkuSet = {};
+      D.inv2.forEach(function (r) {
+        if (!inU(r[0]) || !uOk(r[0], r[2])) return;
+        var q = r[7 + di]; if (!q) return;
+        allSkuQ += q; allSkuV += q * r[6]; if (q > 0) nSkuSet[r[5]] = 1;
+        if (!selOk(r[0], r[1]) || (fc >= 0 && r[3] !== fc)) return;
+        var k = r[5] + '|' + r[3], s = skuMap[k] || (skuMap[k] = { k: r[5], c: r[3], q: 0, v: 0, loc: {}, rows: [] });
+        s.q += q; s.v += q * r[6];
+        var lk = r[0] + '|' + r[1]; s.loc[lk] = (s.loc[lk] || 0) + q;
+        s.rows.push({ src: r[0], ch: r[1], t: r[2], u: r[4], q: q, cu: r[6], v: q * r[6] });
+      });
+      var skus = Object.keys(skuMap).map(function (k) { return skuMap[k]; }).sort(function (a, b) { return b.v - a.v; }), cum = 0;
+      skus.forEach(function (s, ix) { cum += s.v; s.cum = cum; s.rank = ix + 1; s.cu = s.q ? s.v / s.q : 0; });
+      var skuV = skus.reduce(function (a, s) { return a + s.v; }, 0), catV = (fc >= 0 ? (cats[fc] ? cats[fc].v : 0) : catL.reduce(function (a, c) { return a + c.v; }, 0));
+      /* conciliación: referencia − suma del desglose = diferencia (sin forzar a cero) */
+      var sumAlm = almL.reduce(function (a, x) { return a + x.v; }, 0) + canL.reduce(function (a, x) { return a + x.v; }, 0);
+      var rec = [
+        { n: 'Total y almacenes + canales', ref: ref.v, sum: sumAlm },
+        { n: 'Total y SKU (cantidad × costo unitario)', ref: ref.v, sum: allSkuV },
+        { n: (fch != null ? 'Almacén o canal seleccionado' : 'Total') + ' y categorías', ref: sel.v, sum: catL.reduce(function (a, c) { return a + c.v; }, 0) },
+        { n: (fc >= 0 ? 'Categoría seleccionada' : fch != null ? 'Almacén o canal seleccionado' : 'Total') + ' y SKU', ref: fc >= 0 ? catV : sel.v, sum: skuV }
+      ];
+      var ciaL = Object.keys(cias).map(function (k) { var c = cias[k]; c.det = Object.keys(c.det).map(function (d) { return c.det[d]; }).filter(function (x) { return x.q || x.v; }).sort(function (a, b) { return b.v - a.v; }); return c; }).filter(function (x) { return x.q || x.v; }).sort(function (a, b) { return b.v - a.v; });
+      rec.push({ n: 'Selección y compañías', ref: fc >= 0 ? catV : sel.v, sum: ciaL.reduce(function (a, x) { return a + x.v; }, 0) });
+      rec.forEach(function (x) { x.dif = x.ref - x.sum; x.exacta = Math.abs(x.dif) < 0.005; x.ok = Math.abs(x.dif) < 1; });   // < $1 = solo centavos de redondeo del concentrado (se muestra el importe real)
+      return { di: di, ref: ref, prev: prev, cias: ciaL, alm: almL, can: canL, sel: sel, cats: catL, skus: skus, rec: rec, skuV: skuV, skuQ: skus.reduce(function (a, s) { return a + s.q; }, 0), allSkuQ: allSkuQ,
+               avg: ref.q > 0 ? ref.v / ref.q : null, nSku: Object.keys(nSkuSet).length, avgPzs: Object.keys(nSkuSet).length ? ref.q / Object.keys(nSkuSet).length : null };
+    }
+
+    /* piezas y valor totales (mismo universo que valor()) de cada corte hasta el seleccionado, y su promedio */
+    function serie(di, U) {
+      U = U || {}; var uf = U.fuente == null ? -1 : U.fuente, ut = setOf(U.t);
+      var s = []; for (var k = 0; k <= di; k++) s.push({ di: k, q: 0, v: 0 });
+      D.st.forEach(function (r) { if ((r[0] <= 1 || r[0] === iFuera) && r[5] <= di && (uf < 0 || (r[0] === iFuera ? 1 : r[0]) === uf) && (ut == null || ut[r[2]])) { s[r[5]].q += r[6]; s[r[5]].v += r[7]; } });
+      var n = s.length;
+      return { cortes: s, n: n, avgQ: s.reduce(function (a, x) { return a + x.q; }, 0) / n, avgV: s.reduce(function (a, x) { return a + x.v; }, 0) / n };
+    }
+
+    /* tendencia: piezas y valor de cada corte, para el total o para la selección (almacén/canal y categoría); el último punto coincide con valor() */
+    function tendencia(F, U) {
+      F = F || {}; U = U || {}; var fu = F.fuente == null ? -1 : F.fuente, fch = setOf(F.ch), fc = F.c == null ? -1 : F.c, s = [], k;
+      var uf = U.fuente == null ? -1 : U.fuente, ut = setOf(U.t);
+      for (k = 0; k < ND; k++) s.push({ di: k, q: 0, v: 0 });
+      D.st.forEach(function (r) {
+        if (!(r[0] <= 1 || r[0] === iFuera)) return;
+        if ((uf >= 0 && (r[0] === iFuera ? 1 : r[0]) !== uf) || (ut != null && !ut[r[2]])) return;
+        if ((fu >= 0 && (r[0] === iFuera ? 1 : r[0]) !== fu) || (fch != null && !fch[r[1]]) || (fc >= 0 && r[3] !== fc)) return;
+        s[r[5]].q += r[6]; s[r[5]].v += r[7];
+      });
+      return s;
+    }
+
+    /* desglose de un almacén (ERP: por ubicación) o canal (Plataformas: por estatus) al corte, respetando los filtros globales */
+    function desglose(di, ch, kind, U) {
+      U = U || {}; var uf = U.fuente == null ? -1 : U.fuente, ut = setOf(U.t), o = {};
+      D.st.forEach(function (r) {
+        if (r[5] !== di || r[1] !== ch || !(kind === 0 ? r[0] === 0 : (r[0] === 1 || r[0] === iFuera))) return;
+        if ((uf >= 0 && kind !== uf) || (ut != null && !ut[r[2]])) return;
+        var x = o[r[4]] || (o[r[4]] = { u: r[4], name: D.dims.u[r[4]], q: 0, v: 0 }); x.q += r[6]; x.v += r[7];
+      });
+      return Object.keys(o).map(function (k) { return o[k]; }).filter(function (x) { return x.q || x.v; }).sort(function (a, b) { return b.v - a.v; });
+    }
+
+    /* tiendas disponibles para el filtro (según la fuente elegida), de mayor a menor valor al corte */
+    function tiendas(di, uf) {
+      var o = {};
+      D.st.forEach(function (r) {
+        if (!(r[0] <= 1 || r[0] === iFuera) || r[5] !== di || (uf >= 0 && (r[0] === iFuera ? 1 : r[0]) !== uf)) return;
+        var x = o[r[2]] || (o[r[2]] = { t: r[2], name: D.dims.t[r[2]], q: 0, v: 0 }); x.q += r[6]; x.v += r[7];
+      });
+      return Object.keys(o).map(function (k) { return o[k]; }).filter(function (x) { return x.q || x.v; }).sort(function (a, b) { return b.v - a.v; });
+    }
+
+    /* ---------- Movimientos y advertencias ----------
+       Los movimientos salen de comparar cortes consecutivos (mv): un aumento de existencias es una entrada y una baja es una salida.
+       Universo: ERP + Plataformas (estatus que ya contaba el movimiento). F = {ch, c} selección; U = {fuente, t} filtros globales.
+       Traspaso interno = lo que, para un mismo SKU y fuente, sale de un lugar y entra a otro en el mismo corte (se queda dentro del inventario). */
+    function cutSel(ds) {
+      var a = [], k, seen = {};
+      if (Array.isArray(ds)) ds.forEach(function (x) { if (x >= 0 && x < ND && !seen[x]) { seen[x] = 1; a.push(x); } }); else for (k = 0; k <= ds; k++) a.push(k);
+      return a.sort(function (x, y) { return x - y; });
+    }
+    function days(a, b) { return Math.round((Date.parse(D.dates[b]) - Date.parse(D.dates[a])) / 864e5); }
+    function movFiltro(F, U) {
+      F = F || {}; U = U || {};
+      var fch = setOf(F.ch), fc = F.c == null ? -1 : F.c, uf = U.fuente == null ? -1 : U.fuente, ut = setOf(U.t);
+      return function (r) { return r[0] <= 1 && (uf < 0 || r[0] === uf) && (ut == null || ut[r[2]]) && (fch == null || fch[r[1]]) && (fc < 0 || r[3] === fc); };
+    }
+    function movimientos(dsel, F, U) {
+      var sel = cutSel(dsel), di = sel[sel.length - 1], ok = movFiltro(F, U), cuts = [], cm = {}, k, per = {}, sk = {}, tot = { e: 0, s: 0, ve: 0, vs: 0 }, skuAll = {}, pos = {};
+      sel.forEach(function (k) { if (k < 1) return; var c = { di: k, prev: k - 1, dias: days(k - 1, k), e: 0, s: 0, ve: 0, vs: 0, skus: {}, ch: {}, u: {}, sk: {}, par: {} }; pos[k] = cuts.length; cuts.push(c); cm[k] = c; });
+      D.mv.forEach(function (r) {
+        if (!cm[r[6]] || !ok(r)) return;
+        var c = cm[r[6]], dq = r[7], dv = r[8], ent = dq > 0, a = Math.abs(dq), av = Math.abs(dv);
+        if (ent) { c.e += a; c.ve += av; tot.e += a; tot.ve += av; } else { c.s += a; c.vs += av; tot.s += a; tot.vs += av; }
+        c.skus[r[5]] = 1; skuAll[r[5]] = 1;
+        var kc = r[0] + '|' + r[1] + '|' + r[2], xc = c.ch[kc] || (c.ch[kc] = { src: r[0], ch: r[1], t: r[2], e: 0, s: 0, ve: 0, vs: 0 });
+        var ku = r[0] + '|' + r[4], xu = c.u[ku] || (c.u[ku] = { src: r[0], u: r[4], e: 0, s: 0, ve: 0, vs: 0 });
+        var xs = c.sk[r[5]] || (c.sk[r[5]] = { k: r[5], e: 0, s: 0, ve: 0, vs: 0 });
+        var kp = r[0] + '|' + r[5], xp = c.par[kp] || (c.par[kp] = { iq: 0, iv: 0, oq: 0, ov: 0 });
+        [xc, xu, xs].forEach(function (x) { if (ent) { x.e += a; x.ve += av; } else { x.s += a; x.vs += av; } });
+        if (ent) { xp.iq += a; xp.iv += av; } else { xp.oq += a; xp.ov += av; }
+        var s = sk[r[5]] || (sk[r[5]] = { k: r[5], e: 0, s: 0, ve: 0, vs: 0, cut: new Array(cuts.length).fill(0), ch: {} });
+        if (ent) { s.e += a; s.ve += av; } else { s.s += a; s.vs += av; }
+        s.cut[pos[r[6]]] += av; s.ch[r[1]] = (s.ch[r[1]] || 0) + av;
+      });
+      cuts.forEach(function (c) {
+        c.iq = 0; c.iv = 0;
+        Object.keys(c.par).forEach(function (kp) { var x = c.par[kp], m = Math.min(x.iq, x.oq); if (m > 0) { c.iq += m; c.iv += m * (x.iv / x.iq + x.ov / x.oq) / 2; } });
+        c.mov = c.ve + c.vs; c.nSku = Object.keys(c.skus).length;
+      });
+      var peak = null; cuts.forEach(function (c) { if (c.mov > 0 && (!peak || c.mov > peak.mov)) peak = c; });
+      function lst(o) { return Object.keys(o).map(function (q) { return o[q]; }); }
+      var pk = null;
+      if (peak) {
+        pk = { di: peak.di, prev: peak.prev, dias: peak.dias, e: peak.e, s: peak.s, ve: peak.ve, vs: peak.vs, iq: peak.iq, iv: peak.iv, mov: peak.mov, nSku: peak.nSku,
+          neQ: peak.e - peak.iq, nsQ: peak.s - peak.iq, neV: peak.ve - peak.iv, nsV: peak.vs - peak.iv,
+          ch: lst(peak.ch).map(function (x) { x.name = D.dims.ch[x.ch]; x.tienda = D.dims.t[x.t]; x.fuente = x.src === 0 ? 'ERP' : 'Plataformas'; return x; }).sort(function (a, b) { return (b.ve + b.vs) - (a.ve + a.vs); }),
+          u: lst(peak.u).map(function (x) { x.name = D.dims.u[x.u]; x.fuente = x.src === 0 ? 'ERP' : 'Plataformas'; return x; }).sort(function (a, b) { return (b.ve + b.vs) - (a.ve + a.vs); }),
+          skus: lst(peak.sk).map(function (x) { x.sku = D.skus[x.k]; x.tit = D.tit[x.k]; x.mov = x.ve + x.vs; return x; }).sort(function (a, b) { return b.mov - a.mov; }).slice(0, 5) };
+      }
+      var top = lst(sk).map(function (s) {
+        s.sku = D.skus[s.k]; s.tit = D.tit[s.k]; s.cat = D.dims.c[D.skc[s.k]]; s.mov = s.ve + s.vs; s.movQ = s.e + s.s; s.neto = s.ve - s.vs; s.netoQ = s.e - s.s;
+        var bi = 0; s.cut.forEach(function (v, i) { if (v > s.cut[bi]) bi = i; }); s.pico = cuts[bi] ? cuts[bi].di : 0;
+        var bc = null; Object.keys(s.ch).forEach(function (q) { if (bc == null || s.ch[q] > s.ch[bc]) bc = q; }); s.lugar = bc == null ? '' : D.dims.ch[+bc];
+        return s;
+      }).sort(function (a, b) { return b.mov - a.mov; });
+      return { di: di, ok: cuts.length > 0, cuts: cuts, tot: tot, nSku: Object.keys(skuAll).length, peak: pk, top4: top.slice(0, 4), nTop: top.length, dias: cuts.reduce(function (a, c) { return a + c.dias; }, 0) };
+    }
+
+    /* SKU con existencia al corte que no tuvieron ningún movimiento entre el primer corte y el seleccionado */
+    function sinMov(dsel, F, U) {
+      F = F || {}; var sel = cutSel(dsel), di = sel[sel.length - 1], cs = {}, nC = 0, dd = 0, okM = movFiltro(F, U), moved = {}, all = {}, base = { n: 0, q: 0, v: 0 }, dead = {}, tq = 0, tv = 0;
+      sel.forEach(function (k) { if (k >= 1) { cs[k] = 1; nC++; dd += days(k - 1, k); } });
+      D.mv.forEach(function (r) { if (cs[r[6]] && okM(r)) moved[r[5]] = 1; });
+      D.inv2.forEach(function (r) {
+        if (!okM(r)) return; var q = r[7 + di]; if (!q) return;
+        var v = q * r[6]; tq += q; tv += v;
+        var a = all[r[5]] || (all[r[5]] = { k: r[5], q: 0, v: 0, rows: [] }); a.q += q; a.v += v; a.rows.push({ src: r[0], ch: r[1], c: r[3], q: q, v: v });
+      });
+      var skus = [], byCh = {}, byCat = {}, tot = { n: 0, q: 0, v: 0 }, nAll = Object.keys(all).length, chAll = {};
+      Object.keys(all).forEach(function (k) {
+        var a = all[k]; a.rows.forEach(function (x) { var kc = x.src + '|' + x.ch, y = chAll[kc] || (chAll[kc] = { q: 0, v: 0 }); y.q += x.q; y.v += x.v; });
+        if (moved[k]) return;
+        var locs = {}; a.rows.forEach(function (x) { locs[D.dims.ch[x.ch]] = (locs[D.dims.ch[x.ch]] || 0) + x.v; });
+        var lugares = Object.keys(locs).sort(function (p, q) { return locs[q] - locs[p]; });
+        skus.push({ k: +k, sku: D.skus[k], tit: D.tit[k], cat: D.dims.c[D.skc[k]], c: D.skc[k], q: a.q, v: a.v, cu: a.q ? a.v / a.q : 0, lugares: lugares });
+        tot.n++; tot.q += a.q; tot.v += a.v;
+        var seen = {}; a.rows.forEach(function (x) {
+          var kc = x.src + '|' + x.ch, y = byCh[kc] || (byCh[kc] = { src: x.src, ch: x.ch, name: D.dims.ch[x.ch], fuente: x.src === 0 ? 'ERP' : 'Plataformas', n: 0, q: 0, v: 0 });
+          if (!seen[kc]) { y.n++; seen[kc] = 1; } y.q += x.q; y.v += x.v;
+        });
+        var cc = byCat[D.skc[k]] || (byCat[D.skc[k]] = { c: D.skc[k], name: D.dims.c[D.skc[k]], n: 0, q: 0, v: 0 }); cc.n++; cc.q += a.q; cc.v += a.v;
+      });
+      function lst(o) { return Object.keys(o).map(function (q) { return o[q]; }).sort(function (a, b) { return b.v - a.v; }); }
+      var chL = lst(byCh); chL.forEach(function (x) { var t0 = chAll[x.src + '|' + x.ch]; x.totV = t0 ? t0.v : 0; });
+      skus.sort(function (a, b) { return b.v - a.v; });
+      return { ok: nC > 0, di: di, dias: dd, tot: tot, nAll: nAll, totQ: tq, totV: tv, skus: skus, ch: chL, cat: lst(byCat) };
+    }
+
+    /* Movimiento de un SKU por corte (hasta di) con los mismos filtros: existencia, entradas y salidas, y en qué lugares se movió */
+    function movSku(sk, dsel, F, U) {
+      var sel = cutSel(dsel), di = sel[sel.length - 1], ok = movFiltro(F, U), cuts = [], cm = {}, lug = {}, hoy = [], dd = 0;
+      sel.forEach(function (k) { var c = { di: k, dias: k ? days(k - 1, k) : 0, q: 0, v: 0, e: 0, s: 0, ve: 0, vs: 0 }; cm[k] = c; cuts.push(c); if (k) dd += c.dias; });
+      D.inv2.forEach(function (r) {
+        if (r[5] !== sk || !ok(r)) return;
+        sel.forEach(function (z) { var q = r[7 + z]; if (q) { cm[z].q += q; cm[z].v += q * r[6]; } });
+        var qh = r[7 + di]; if (qh) hoy.push({ fuente: r[0] === 0 ? 'ERP' : 'Plataformas', ch: D.dims.ch[r[1]], t: D.dims.t[r[2]], u: D.dims.u[r[4]], q: qh, cu: r[6], v: qh * r[6] });
+      });
+      D.mv.forEach(function (r) {
+        if (r[5] !== sk || r[6] < 1 || !cm[r[6]] || !ok(r)) return;
+        var c = cm[r[6]], a = Math.abs(r[7]), av = Math.abs(r[8]), ent = r[7] > 0;
+        if (ent) { c.e += a; c.ve += av; } else { c.s += a; c.vs += av; }
+        var kk = r[0] + '|' + r[1] + '|' + r[2] + '|' + r[4], x = lug[kk] || (lug[kk] = { fuente: r[0] === 0 ? 'ERP' : 'Plataformas', ch: D.dims.ch[r[1]], t: D.dims.t[r[2]], u: D.dims.u[r[4]], e: 0, s: 0, ve: 0, vs: 0 });
+        if (ent) { x.e += a; x.ve += av; } else { x.s += a; x.vs += av; }
+      });
+      var tot = { e: 0, s: 0, ve: 0, vs: 0 }, ult = null, pico = null;
+      cuts.forEach(function (c) { tot.e += c.e; tot.s += c.s; tot.ve += c.ve; tot.vs += c.vs; if (c.e + c.s > 0) { ult = c.di; if (!pico || c.ve + c.vs > pico.ve + pico.vs) pico = c; } });
+      var lugares = Object.keys(lug).map(function (q) { return lug[q]; }).sort(function (a, b) { return (b.ve + b.vs) - (a.ve + a.vs); });
+      hoy.sort(function (a, b) { return b.v - a.v; });
+      return { sku: D.skus[sk], tit: D.tit[sk], cat: D.dims.c[D.skc[sk]], cuts: cuts, tot: tot, ult: ult, pico: pico ? pico.di : null, lugares: lugares, hoy: hoy, nCortes: cuts.filter(function (c) { return c.di >= 1; }).length,
+        q: cm[di].q, v: cm[di].v, mov: tot.ve + tot.vs, diasSin: ult == null ? dd : days(ult, di) };
+    }
+
+    /* indicadores de concentración sobre una lista de SKU ya ordenada por valor descendente */
+    function concentracion(list, total) {
+      var n = list.length, out = { n: n, top10: 0, top20: 0, n80: 0, n80pct: 0, shown10: Math.min(10, n), shown20: Math.min(20, n) }; if (!n || !(total > 0)) return out;
+      var cum = 0, got = false;
+      list.forEach(function (s, i) { cum += s.v; if (i === 9) out.top10 = cum / total; if (i === 19) out.top20 = cum / total; if (!got && cum / total >= 0.8) { out.n80 = i + 1; got = true; } });
+      if (n < 10) out.top10 = cum / total;
+      if (n < 20) out.top20 = cum / total;
+      if (!got) out.n80 = n;
+      out.n80pct = out.n80 / n; return out;
+    }
+
+    /* validaciones del corte (sin filtros): cada alerta trae sus registros de origen */
+    function validar(di, v) {
+      var cn = function (i) { return D.dims.c[i]; }, A = { sinCosto: [], sinCategoria: [], duplicados: [], invalidos: [], catalogo: [] }, dup = {};
+      function reg(r, q) { return { fuente: D.dims.src[r[0]], ch: D.dims.ch[r[1]], t: D.dims.t[r[2]], c: cn(r[3]), u: D.dims.u[r[4]], sku: D.skus[r[5]], tit: D.tit[r[5]], q: q, cu: r[6], v: q * r[6] }; }
+      D.inv2.forEach(function (r) {
+        if (!(r[0] <= 1 || r[0] === iFuera)) return; var q = r[7 + di]; if (!q) return;
+        if (q > 0 && !(r[6] > 0)) A.sinCosto.push(reg(r, q));
+        if (q > 0 && /^(sin dato|sin categor[ií]a|)$/i.test(cn(r[3]).trim())) A.sinCategoria.push(reg(r, q));
+        if (q < 0 || !isFinite(q) || !isFinite(r[6]) || r[6] < 0) A.invalidos.push(reg(r, q));
+        var t = D.tit[r[5]]; if (q > 0 && (!t || /^sin nombre/i.test(t))) A.catalogo.push(reg(r, q));
+        var k = r[0] + '|' + r[1] + '|' + r[2] + '|' + r[4] + '|' + r[5]; (dup[k] || (dup[k] = [])).push(reg(r, q));
+      });
+      Object.keys(dup).forEach(function (k) { var L = dup[k], cs = {}; L.forEach(function (x) { cs[x.c] = 1; }); if (Object.keys(cs).length > 1) L.forEach(function (x) { A.duplicados.push(x); }); });
+      D.st.forEach(function (r) { if ((r[0] <= 1 || r[0] === iFuera) && r[5] === di && (r[6] < 0 || r[7] < 0 || !isFinite(r[7]))) A.invalidos.push({ fuente: D.dims.src[r[0]], ch: D.dims.ch[r[1]], t: D.dims.t[r[2]], c: cn(r[3]), u: D.dims.u[r[4]], sku: '(agregado)', tit: '', q: r[6], cu: 0, v: r[7] }); });
+      var dif = v.rec.filter(function (x) { return !x.ok; });
+      function sum(L) { return { n: L.length, q: L.reduce(function (a, x) { return a + x.q; }, 0), v: L.reduce(function (a, x) { return a + x.v; }, 0), rows: L.sort(function (a, b) { return b.v - a.v; }) }; }
+      return { sinCosto: sum(A.sinCosto), sinCategoria: sum(A.sinCategoria), duplicados: sum(A.duplicados), invalidos: sum(A.invalidos), catalogo: sum(A.catalogo), diferencias: { n: dif.length, rows: dif } };
+    }
+
+    /* ficha de un SKU: existencia por fuente, almacén/canal, tienda y ubicación/estatus al corte, más disponible y reservado del ERP si existen */
+    function ficha(di, sk) {
+      var rows = [], dispRows = [], cl = { disponible: null };
+      D.inv2.forEach(function (r) {
+        if (r[5] !== sk) return; var q = r[7 + di];
+        if (r[0] === iDisp && q) { cl.disponible = (cl.disponible || 0) + q; dispRows.push({ ch: D.dims.ch[r[1]], t: D.dims.t[r[2]], q: q, cu: r[6], v: q * r[6] }); }
+        if ((r[0] <= 1 || r[0] === iFuera) && q) rows.push({ fuente: D.dims.src[r[0]], ch: D.dims.ch[r[1]], t: D.dims.t[r[2]], c: D.dims.c[r[3]], u: D.dims.u[r[4]], q: q, cu: r[6], v: q * r[6], aptas: r[0] === 1 && !!vendSet[r[4]] });
+      });
+      rows.sort(function (a, b) { return b.v - a.v; });
+      var tieneD = !!(D.has && D.has[iDisp] && D.has[iDisp].indexOf(di) >= 0);
+      var vp = { q: 0, v: 0 }; rows.forEach(function (x) { if (x.aptas) { vp.q += x.q; vp.v += x.v; } });
+      var ve = { q: 0, v: 0 }; dispRows.forEach(function (x) { ve.q += x.q; ve.v += x.v; });
+      var venta = { erp: ve, plat: vp, q: (tieneD ? ve.q : 0) + vp.q, v: (tieneD ? ve.v : 0) + vp.v, tieneD: tieneD };
+      return { venta: venta, sku: D.skus[sk], tit: D.tit[sk], rows: rows, q: rows.reduce(function (a, x) { return a + x.q; }, 0), v: rows.reduce(function (a, x) { return a + x.v; }, 0), disponible: cl.disponible, dispRows: dispRows.sort(function (a, b) { return b.q - a.q; }), tieneDisp: !!(D.has && D.has[iDisp] && D.has[iDisp].indexOf(di) >= 0) };
+    }
+
     return { D: D, ND: ND, iDisp: iDisp, iRes: iRes, vendSet: vendSet, options: options, srcFilter: srcFilter, erpBase: erpBase, inSet: inSet,
-             compute: compute, topProducts: topProducts, summary: summary, lowRot: lowRot, noMov: noMov };
+             compute: compute, topProducts: topProducts, summary: summary, lowRot: lowRot, noMov: noMov,
+             valor: valor, serie: serie, tendencia: tendencia, tiendas: tiendas, desglose: desglose, movimientos: movimientos, sinMov: sinMov, movSku: movSku, concentracion: concentracion, validar: validar, ficha: ficha };
   }
 
   g.InvEngine = { create: create };

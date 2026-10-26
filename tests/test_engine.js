@@ -86,7 +86,7 @@ const last = D.dates.length - 1;
   ok(L.nZ === 1838 && L.nL === 262, 'baja rotación: 1,838 sin salidas y 262 con < 5 %', L.nZ + ' / ' + L.nL);
   const fuera = D.meta.excluido.estatus, dentro = ['Aptas para vender', 'No aptas para vender'];
   ok(fuera.length === 5 && ['Pendientes de ingreso', 'En transferencia', 'Devueltas por el comprador', 'En revisión', 'Extraviadas (en búsqueda)'].every(n => fuera.includes(n)), 'fuera del inventario: en camino (3) y procesos internos (2)', fuera.join(', '));
-  ok(!D.dims.u.some((u, i) => fuera.includes(u) && D.st.some(r => r[4] === i)), 'los estatus fuera del inventario no están en las existencias');
+  ok(!D.dims.u.some((u, i) => fuera.includes(u) && D.st.some(r => r[4] === i && r[0] <= 1)), 'los estatus fuera del inventario no están en las existencias de ERP ni Plataformas (solo en su fuente aparte)');
   ok(dentro.every(n => D.dims.u.some((u, i) => u === n && D.st.some(r => r[0] === 1 && r[4] === i))), 'Plataformas cuenta como inventario solo con aptas y no aptas');
   const sU = (di, names) => D.st.filter(r => r[0] === 1 && r[5] === di && names.some(n => D.dims.u.indexOf(n) === r[4])).reduce((a2, r) => a2 + r[6], 0);
   near(C.A(1, last).q, sU(last, dentro), 0, 'inventario de Plataformas = aptas + no aptas');
