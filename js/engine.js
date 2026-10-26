@@ -477,7 +477,7 @@
       var rows = [], dispRows = [], cl = { disponible: null };
       D.inv2.forEach(function (r) {
         if (r[5] !== sk) return; var q = r[7 + di];
-        if (r[0] === iDisp && q) { cl.disponible = (cl.disponible || 0) + q; dispRows.push({ ch: D.dims.ch[r[1]], t: D.dims.t[r[2]], q: q, cu: r[6], v: q * r[6] }); }
+        if (r[0] === iDisp && q) { cl.disponible = (cl.disponible || 0) + q; dispRows.push({ ch: D.dims.ch[r[1]], t: D.dims.t[r[2]], u: D.dims.u[r[4]], q: q, cu: r[6], v: q * r[6] }); }
         if ((r[0] <= 1 || r[0] === iFuera) && q) rows.push({ fuente: D.dims.src[r[0]], ch: D.dims.ch[r[1]], t: D.dims.t[r[2]], c: D.dims.c[r[3]], u: D.dims.u[r[4]], q: q, cu: r[6], v: q * r[6], aptas: r[0] === 1 && !!vendSet[r[4]] });
       });
       rows.sort(function (a, b) { return b.v - a.v; });
