@@ -95,12 +95,16 @@ const VE = E.valor(last, {}, { fuente: 0 }), VP = E.valor(last, {}, { fuente: 1 
 near(VE.ref.v + VP.ref.v, V.ref.v, 0.05, 'ERP + Plataformas = total de referencia');
 ok(VE.can.length === 0 && VP.alm.length === 0, 'Con fuente ERP no hay canales; con Plataformas no hay almacenes');
 VE.rec.concat(VP.rec).forEach(r => near(r.dif, 0, 0.05, 'Con filtro de fuente, la conciliación "' + r.n + '" cierra'));
-const tn = E.tiendas(last, -1), tsum = tn.reduce((a, x) => a + x.v, 0);
-near(tsum, V.ref.v, 0.05, 'Las tiendas suman el total de referencia');
+const tn = E.tiendas(last, -1), iMed = D.dims.t.indexOf('SELECTSHOP (MEDICAL)'), iMS = D.dims.t.indexOf('MEDICAL STORE');
+const medV = D.st.filter(r => r[5] === last && r[2] === iMed && (r[0] <= 1 || r[0] === D.dims.src.indexOf('PLATAFORMAS · Fuera del inventario'))).reduce((a, r) => a + r[7], 0);
+const tsum = tn.reduce((a, x) => a + x.v, 0) - medV;   // MEDICAL STORE también cuenta Amazon · SELECTSHOP (MEDICAL) al filtrar
+near(tsum, V.ref.v, 0.05, 'Las tiendas suman el total de referencia (MEDICAL STORE incluye la tienda enlazada)');
+ok(!tn.some(x => x.name === 'SELECTSHOP (MEDICAL)') && medV > 0, 'SELECTSHOP (MEDICAL) no aparece como tienda: cuenta como SELECTSHOP');
+near(E.valor(last, {}, { t: iMS }).ref.v, tn.find(x => x.t === iMS).v, 0.01, 'Filtrar MEDICAL STORE trae también Amazon · SELECTSHOP (MEDICAL)');
 const T0 = tn[0], VT = E.valor(last, {}, { t: T0.t });
 near(VT.ref.v, T0.v, 0.005, 'Filtro de tienda ' + T0.name + ': el total es el de esa tienda');
 VT.rec.forEach(r => near(r.dif, 0, 0.05, 'Con filtro de tienda, la conciliación "' + r.n + '" cierra'));
-ok(VT.skus.every(s => s.rows.every(r => r.t === T0.t)), 'Con filtro de tienda, el detalle por SKU solo trae esa tienda');
+ok(VT.skus.every(s => s.rows.every(r => r.t === T0.t || r.t === iMed)), 'Con filtro de tienda, el detalle por SKU solo trae esa tienda');
 const VTP = E.valor(last, {}, { fuente: 1, t: T0.t }), TT = E.tendencia({}, { fuente: 1, t: T0.t });
 near(TT[last].v, VTP.ref.v, 0.005, 'La tendencia con filtros termina en el total del universo filtrado');
 const SRu = E.serie(last, { fuente: 0 }); ok(SRu.cortes[last].q === VE.ref.q, 'Piezas promedio: la serie respeta el filtro de fuente');
@@ -112,14 +116,14 @@ ok(VCa.cias.length === 1 && VCa.cias[0].n === 'Bloom & Blush', 'Tepotzotlán 3 (
 
 // 13. desglose por compañía: almacenes (ERP) y tiendas (Plataformas) suman el valor de la compañía
 V.cias.forEach(c => { near(c.det.reduce((a, d) => a + d.v, 0), c.v, 0.005, 'Desglose de ' + c.n + ' suma su valor'); ok(c.det.every((d, i) => i === 0 || c.det[i - 1].v >= d.v), 'Desglose de ' + c.n + ' ordenado por valor'); });
-const sc = V.cias.find(c => c.n === 'Sin compañía'); ok(sc && sc.det.some(d => d.nombre === 'MX LOVERS' && d.fuente === 'Plataformas'), 'Sin compañía muestra la tienda MX LOVERS');
+const sc = V.cias.find(c => c.n === 'MX LOVERS'); ok(sc && sc.det.some(d => d.nombre === 'MX LOVERS' && d.fuente === 'Plataformas'), 'MX LOVERS es un grupo con su tienda');
 
 // 14. cada tienda de Plataformas dentro de su grupo trae su razón social (la tienda SELECTSHOP tiene dos: JSB y Selectshop MB)
 const ss = V.cias.find(c => c.n === 'Select Shop');
 ok(ss.det.filter(d => d.fuente === 'Plataformas').every(d => d.razon && d.razon !== 'Sin razón social'), 'Las tiendas de Plataformas traen razón social');
-const sel2 = ss.det.filter(d => d.nombre === 'SELECTSHOP' && d.fuente === 'Plataformas').map(d => d.razon).sort();
+const sel2 = ss.det.filter(d => d.nombre === 'SELECTSHOP' && d.fuente === 'Plataformas').map(d => d.razon).filter((x, i, a) => a.indexOf(x) === i).sort();
 ok(sel2.length === 2 && sel2[0] === 'Comercializadora de Marcas JSB' && sel2[1] === 'Selectshop MB', 'SELECTSHOP aparece con sus dos razones sociales', sel2.join(' / '));
-const med = ss.det.find(d => d.nombre === 'SELECTSHOP (MEDICAL)'); ok(med && med.razon === 'Selectshop MB', 'SELECTSHOP (MEDICAL) pertenece a Selectshop MB');
+ok(ss.det.every(d => d.nombre !== 'SELECTSHOP (MEDICAL)') && ss.det.some(d => d.nombre === 'SELECTSHOP' && d.canal === 'AMAZON' && d.razon === 'Selectshop MB'), 'SELECTSHOP (MEDICAL) se muestra como SELECTSHOP de Amazon (Selectshop MB)');
 // 15. desglose desplegable: ubicaciones (ERP) y estatus (Plataformas) suman el valor del almacén / canal
 V.alm.forEach(x => { const d = E.desglose(last, x.ch, 0, {}); near(d.reduce((a, r) => a + r.v, 0), x.v, 0.005, 'Ubicaciones de ' + D.dims.ch[x.ch] + ' suman el almacén'); near(d.reduce((a, r) => a + r.q, 0), x.q, 0.5, 'Piezas por ubicación de ' + D.dims.ch[x.ch]); });
 V.can.forEach(x => { const d = E.desglose(last, x.ch, 1, {}); near(d.reduce((a, r) => a + r.v, 0), x.v, 0.005, 'Estatus de ' + D.dims.ch[x.ch] + ' suman el canal'); });
@@ -152,7 +156,7 @@ ok(!E.movimientos(0, {}, {}).ok, 'El primer corte no tiene movimientos que medir
 // 17. filtros de varias opciones: elegir varios = sumar cada uno por separado
 const chsAll = V.alm.concat(V.can).slice(0, 3).map(x => x.ch);
 near(E.valor(last, { ch: chsAll }, {}).sel.v, chsAll.reduce((s, c) => s + E.valor(last, { ch: c }, {}).sel.v, 0), 0.01, 'Varios almacenes/canales: la selección suma cada uno');
-const tsAll = E.tiendas(last, -1).slice(0, 3).map(x => x.t);
+const tsAll = E.tiendas(last, -1).filter(x => x.name !== 'MEDICAL STORE' && x.name !== 'SELECTSHOP').slice(0, 3).map(x => x.t);
 near(E.valor(last, {}, { t: tsAll }).ref.v, tsAll.reduce((s, x) => s + E.valor(last, {}, { t: x }).ref.v, 0), 0.01, 'Varias tiendas: el universo suma cada una');
 near(E.movimientos(last, { ch: chsAll }, {}).tot.ve, chsAll.reduce((s, c) => s + E.movimientos(last, { ch: c }, {}).tot.ve, 0), 0.01, 'Movimientos con varios lugares suman cada uno');
 ok(E.valor(last, { ch: [] }, { t: [] }).ref.v === V.ref.v, 'Lista vacía = sin filtro');
@@ -172,6 +176,20 @@ near(MP.cuts.reduce((a, c) => a + c.mov, 0), MP.tot.ve + MP.tot.vs, 0.01, 'Valor
 const SP = E.sinMov(pick, {}, {}); ok(SP.tot.n >= SMv.tot.n, 'Con menos cortes hay igual o más SKU sin movimiento', SP.tot.n + ' vs ' + SMv.tot.n);
 ok(E.movimientos([0], {}, {}).ok === false && E.movimientos([last, last], {}, {}).cuts.length === 1, 'Cortes repetidos o solo el primero');
 const MSp = E.movSku(MV.top4[0].k, pick, {}, {}); ok(MSp.cuts.length === 3 && MSp.q === MS.cuts[last].q, 'Ficha del SKU con varios cortes', MSp.q);
+
+// 12. filtros de compañía y de estatus (Plataformas) / ubicación (ERP)
+{
+  const T = E.valor(last, {}, {}), cs = T.cias.map(c => c.n);
+  const sum = cs.reduce((a, c) => a + E.valor(last, {}, { cia: [c] }).ref.v, 0);
+  near(sum, T.ref.v, 0.01, 'Las compañías suman el total');
+  const ap = D.dims.u.indexOf('Aptas para vender'), A = E.valor(last, {}, { u: [ap] });
+  ok(A.ref.v > 0 && A.ref.v < T.ref.v && A.cias.every(c => c.det.every(d => d.fuente === 'Plataformas')), 'Estatus Aptas para vender deja solo Plataformas');
+  const B = E.valor(last, {}, { cia: ['Bloom & Blush'], u: [ap] });
+  ok(B.ref.v > 0 && B.ref.v < A.ref.v && B.cias.length === 1, 'Compañía + estatus se combinan');
+  const M = E.movimientos([0, last], {}, { cia: ['MX LOVERS'] }), Mt = E.movimientos([0, last], {}, {});
+  ok(M.tot.ve + M.tot.vs <= Mt.tot.ve + Mt.tot.vs, 'Movimientos respetan el filtro de compañía');
+  ok(E.tendencia({}, { cia: ['MX LOVERS'] })[last].v === E.valor(last, {}, { cia: ['MX LOVERS'] }).ref.v, 'Tendencia cuadra con el filtro de compañía');
+}
 
 console.log(fails ? `\n${fails} de ${n} verificaciones fallaron` : `OK: ${n} verificaciones de la concentración de valor`);
 process.exit(fails ? 1 : 0);

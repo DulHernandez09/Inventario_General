@@ -40,10 +40,21 @@ TIENDA_AMAZON_MEDICAL = "SELECTSHOP (MEDICAL)"   # Amazon · Medical Store (raz�
 # Compañías (guía: Excel "Resumen Inventario 23-10-2026"): ERP se asigna por almacén y Plataformas por tienda
 # (cada tienda de Plataformas pertenece a una sola compañía). Lo que no esté aquí se muestra como "Sin compañía".
 CIA_ALMACEN = {"TEPOTZOTLAN 2": "Select Shop", "TEPOTZOTLAN 4": "Select Shop", "IZTAPALAPA": "Select Shop", "NAUCALPAN": "Select Shop",
-               "TEPOTZOTLAN 3": "Bloom & Blush", "TEPOTZOTLAN 3 - MR": "Bloom & Blush"}   # 3 - MR = Miss Rou (Creativa Digital)
+               "TEPOTZOTLAN 3": "Bloom & Blush", "TEPOTZOTLAN 3 - MR": "Bloom & Blush", "TEPOTZOTLAN 3 - MXL": "MX LOVERS"}   # 3 - MR = Miss Rou (Creativa Digital)
 CIA_TIENDA_PLAT = {"SELECTSHOP": "Select Shop", "MEDICAL STORE": "Select Shop", "SIGNA": "Select Shop", "T-LAB": "Select Shop",
                    "NEXU STORE": "Bloom & Blush", "OCENID": "Bloom & Blush", "ARMAF": "Bloom & Blush",
-                   "MISS ROU": "Bloom & Blush", TIENDA_AMAZON_MEDICAL: "Select Shop"}   # Creativa Digital → Bloom & Blush (según el mapa de integración intercompañías)
+                   "MISS ROU": "Bloom & Blush", TIENDA_AMAZON_MEDICAL: "Select Shop",
+                   "BHBE": "Select Shop", "FONTASTIC": "Fontastic", "MX LOVERS": "MX LOVERS"}   # Creativa Digital → Bloom & Blush (según el mapa de integración intercompañías)
+
+
+# Razón social del ERP por almacén y de tiendas de Plataformas sin razón en el concentrado (mapa de integración intercompañías + notas de Dulce)
+RAZON_ALMACEN = {"TEPOTZOTLAN 2": "Selectshop MB", "TEPOTZOTLAN 3": "Bloom & Blush", "TEPOTZOTLAN 3 - MR": "Creativa Digital", "TEPOTZOTLAN 4": "Enfermeras Unidas Plus",
+                 "IZTAPALAPA": "BH Be Healthy", "NAUCALPAN": "BH Solar", "TEPOTZOTLAN 3 - MXL": "MX LOVERS"}
+RAZON_TIENDA = {"BHBE": "BH Be Healthy", "FONTASTIC": "Donkertech"}
+# Amazon · SELECTSHOP (MEDICAL) distingue SKU de Medical Store pero se muestra y se cuenta como SELECTSHOP;
+# al filtrar la tienda MEDICAL STORE (o SELECTSHOP) también entra esa tienda.
+TIENDA_ALIAS = {TIENDA_AMAZON_MEDICAL: "SELECTSHOP"}
+TIENDA_ENLACE = {"MEDICAL STORE": [TIENDA_AMAZON_MEDICAL], "SELECTSHOP": [TIENDA_AMAZON_MEDICAL]}
 
 
 def norm_cat(s):
@@ -109,7 +120,7 @@ def cargar(plat_path, erp_path):
                        "r": p["Razón social"].astype(str).str.strip().replace({"nan": "Sin razón social", "": "Sin razón social"}), "q": p["Total"]})
     rz.loc[(rz.c.str.upper() == "AMAZON") & (rz.t.str.upper() == "MEDICAL STORE"), "t"] = TIENDA_AMAZON_MEDICAL
     m = rz.groupby(["c", "t", "r"]).q.sum().reset_index().sort_values("q", ascending=False)
-    RAZONES.clear(); RAZONES.update({f"{r.c}|{r.t}": r.r for r in m.drop_duplicates(["c", "t"]).itertuples()})
+    RAZONES.clear(); RAZONES.update({f"{r.c}|{r.t}": ("MX LOVERS" if str(r.r).upper() == "SIN IDENTIFICAR" else r.r) for r in m.drop_duplicates(["c", "t"]).itertuples()})
     varias = m.groupby(["c", "t"]).r.nunique(); varias = varias[varias > 1]
     if len(varias):
         print("Aviso: combinaciones plataforma·tienda con más de una razón social (se usa la de más piezas):", [f"{a}|{b}" for a, b in varias.index])
@@ -249,7 +260,7 @@ def main(plat_path, erp_path, disp_path=None):
            "mv": mv, "st": st, "inv2": inv, "skc": skc,
            # clasificación de venta (definida aquí, en la capa de datos, no en la interfaz)
            "cfg": {"vendible_estatus_plataformas": ["Aptas para vender"],
-                   "companias": {"almacen": CIA_ALMACEN, "tienda_plataformas": CIA_TIENDA_PLAT}, "razones": dict(RAZONES),
+                   "companias": {"almacen": CIA_ALMACEN, "tienda_plataformas": CIA_TIENDA_PLAT}, "razones": dict(RAZONES), "razon_almacen": RAZON_ALMACEN, "tienda_alias": TIENDA_ALIAS, "tienda_enlace": TIENDA_ENLACE, "razon_tienda": RAZON_TIENDA,
                    # Plataformas: solo "aptas" y "no aptas" ocupan espacio y cuentan como inventario
                    "estatus_en_camino": EN_CAMINO, "estatus_ocupa_espacio": ["Aptas para vender", "No aptas para vender"],
                    "ubicaciones_fuera_de_disponible": {"mermas": UB_MERMAS, "venta_plataforma": UB_VENTA_PLATAFORMA, "outlet": UB_OUTLET},

@@ -4,10 +4,10 @@ Dashboard de inventario (ERP + Plataformas, piezas y valor a costo) en una sola 
 (`index.html` solo redirige a ella, así la raíz de GitHub Pages abre el dashboard).
 
 **Pestañas**
-- **Inventario:** valor total, tendencia, concentración por almacén/canal (con ubicaciones y estatus desplegables), por razón social, por categoría y por SKU, y conciliación.
+- **Inventario:** valor total, tendencia, concentración por almacén/ubicación (con ubicaciones y estatus desplegables), por razón social, por categoría y por SKU, y conciliación.
 - **Movimientos y advertencias:** entradas y salidas por corte, corte con más movimiento, Top 4 SKU con más movimiento e inventario sin movimiento.
 
-**Filtros:** fecha de corte, fuente, canal/almacén y tienda; todos admiten varias opciones.
+**Filtros:** fecha de corte, fuente, ubicación/almacén, tienda, compañía y estatus; todos admiten varias opciones.
 
 Se abre con doble clic (no necesita servidor). Enlaces directos: `?vista=mov`, `?cortes=2,5,8`, `?fuente=erp`, `?ch=MERCADO LIBRE,AMAZON`, `?tienda=SELECTSHOP`, `?sku=CODIGO`.
 

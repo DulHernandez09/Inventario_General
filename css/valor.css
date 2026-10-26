@@ -299,3 +299,11 @@ details.how{display:none}
 .lgd{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#14543D;font-weight:600}
 .lgd i{width:12px;height:12px;border-radius:3px;background:#1E9E6A;display:inline-block}
 .drawer .bd{padding:18px 22px}
+
+.g2{flex-wrap:wrap;white-space:normal;row-gap:2px}
+.g2{display:block;line-height:1.5}
+.g2 .tag{margin-right:6px;vertical-align:1px}
+
+.gnote{font-size:12px;color:var(--muted);background:#F7F7F7;border-left:3px solid var(--c,#FF541C);border-radius:4px;padding:6px 10px;margin:0 0 8px;line-height:1.45}
+.gv>.tabs{margin-bottom:12px}
+.gv>.tabs{align-self:flex-start;width:max-content;max-width:100%}
